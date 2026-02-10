@@ -1,4 +1,4 @@
-declare module 'cloudscraper' {
-  const cloudscraper: any
-  export default cloudscraper
+declare module "cloudscraper" {
+	const cloudscraper: any;
+	export default cloudscraper;
 }
