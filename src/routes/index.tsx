@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
@@ -167,6 +167,78 @@ const dedupeTokensBySymbol = <T extends { symbol: string }>(items: T[]) => {
   })
 }
 
+const TOKEN_ITEM_HEIGHT = 36
+const TOKEN_LIST_HEIGHT = 240
+const TOKEN_OVERSCAN = 6
+
+type VirtualTokenListProps<T> = {
+  items: T[]
+  emptyMessage: string
+  renderItem: (item: T) => React.ReactNode
+}
+
+const useDebouncedValue = <T,>(value: T, delayMs = 200) => {
+  const [debounced, setDebounced] = useState(value)
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebounced(value)
+    }, delayMs)
+    return () => window.clearTimeout(handle)
+  }, [value, delayMs])
+
+  return debounced
+}
+
+const VirtualTokenList = <T,>({
+  items,
+  emptyMessage,
+  renderItem,
+}: VirtualTokenListProps<T>) => {
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const [scrollTop, setScrollTop] = useState(0)
+
+  useEffect(() => {
+    if (listRef.current) {
+      listRef.current.scrollTop = 0
+      setScrollTop(0)
+    }
+  }, [items])
+
+  const totalHeight = items.length * TOKEN_ITEM_HEIGHT
+  const startIndex = Math.max(
+    0,
+    Math.floor(scrollTop / TOKEN_ITEM_HEIGHT) - TOKEN_OVERSCAN,
+  )
+  const endIndex = Math.min(
+    items.length,
+    Math.ceil((scrollTop + TOKEN_LIST_HEIGHT) / TOKEN_ITEM_HEIGHT) +
+      TOKEN_OVERSCAN,
+  )
+  const offset = startIndex * TOKEN_ITEM_HEIGHT
+  const visibleItems = items.slice(startIndex, endIndex)
+
+  return (
+    <div
+      ref={listRef}
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      className="h-60 overflow-y-auto"
+    >
+      {items.length === 0 ? (
+        <div className="flex h-full items-center justify-center px-3 py-2 text-sm text-slate-500">
+          {emptyMessage}
+        </div>
+      ) : (
+        <div style={{ height: totalHeight, position: 'relative' }}>
+          <div style={{ transform: `translateY(${offset}px)` }}>
+            {visibleItems.map(renderItem)}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function App() {
   const search = Route.useSearch()
   const navigate = Route.useNavigate()
@@ -192,15 +264,25 @@ function App() {
     queryFn: () => getTokenList(),
   })
 
-  console.log("tokenListQuery", tokenListQuery.data)
+  console.log("formState.tokenIn", formState.tokenIn)
 
   const tokens = tokenListQuery.data ?? fallbackTokenList
   const tokensForSelect = useMemo(
     () => dedupeTokensBySymbol(tokens),
     [tokens],
   )
+  const tokenBySymbol = useMemo(() => {
+    const map = new Map<string, (typeof tokensForSelect)[number]>()
+    tokensForSelect.forEach((token) => {
+      map.set(token.symbol, token)
+    })
+    return map
+  }, [tokensForSelect])
+  const debouncedTokenInQuery = useDebouncedValue(tokenInQuery, 600)
+  const debouncedTokenOutQuery = useDebouncedValue(tokenOutQuery, 600)
+
   const tokenInOptions = useMemo(() => {
-    const normalized = tokenInQuery.trim().toLowerCase()
+    const normalized = debouncedTokenInQuery.trim().toLowerCase()
     if (!normalized) {
       return tokensForSelect
     }
@@ -210,10 +292,10 @@ function App() {
       const name = token.name.toLowerCase()
       return fuzzyMatch(normalized, symbol) || fuzzyMatch(normalized, name)
     })
-  }, [tokenInQuery, tokensForSelect])
+  }, [debouncedTokenInQuery, tokensForSelect])
 
   const tokenOutOptions = useMemo(() => {
-    const normalized = tokenOutQuery.trim().toLowerCase()
+    const normalized = debouncedTokenOutQuery.trim().toLowerCase()
     if (!normalized) {
       return tokensForSelect
     }
@@ -223,7 +305,7 @@ function App() {
       const name = token.name.toLowerCase()
       return fuzzyMatch(normalized, symbol) || fuzzyMatch(normalized, name)
     })
-  }, [tokenOutQuery, tokensForSelect])
+  }, [debouncedTokenOutQuery, tokensForSelect])
 
   const tokenOutDecimals = query.data?.tokenOutDecimals ?? 18
 
@@ -411,9 +493,24 @@ function App() {
                   }}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select token" />
+                    <SelectValue placeholder="Select token">
+                      {tokenBySymbol.get(formState.tokenIn) ? (
+                        <>
+                          <span className="font-mono">
+                            {tokenBySymbol.get(formState.tokenIn)?.symbol}
+                          </span>
+                          <span className="text-slate-500">
+                            {tokenBySymbol.get(formState.tokenIn)?.name}
+                          </span>
+                        </>
+                      ) : null}
+                    </SelectValue>
                   </SelectTrigger>
-                  <SelectContent className="max-h-72">
+                  <SelectContent
+                    position="popper"
+                    align="start"
+                    className="h-80 w-[var(--radix-select-trigger-width)] overflow-hidden"
+                  >
                     {isTokenInOpen && (
                       <>
                         <div className="sticky top-0 z-10 bg-white p-2">
@@ -427,20 +524,22 @@ function App() {
                             className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
                           />
                         </div>
-                        {tokenInOptions.length === 0 ? (
-                          <div className="px-3 py-2 text-sm text-slate-500">
-                            No tokens found
-                          </div>
-                        ) : (
-                          tokenInOptions.map((token) => (
-                            <SelectItem key={token.symbol} value={getTokenValue(token)}>
-                              <span className="font-mono">{token.symbol}</span>
-                              <span className="text-slate-500">
+                        <VirtualTokenList
+                          items={tokenInOptions}
+                          emptyMessage="No tokens found"
+                          renderItem={(token) => (
+                            <SelectItem
+                              key={token.symbol}
+                              value={getTokenValue(token)}
+                              className="h-9 whitespace-nowrap"
+                            >
+                              <span className="font-mono shrink-0">{token.symbol}</span>
+                              <span className="text-slate-500 truncate">
                                 {token.name}
                               </span>
                             </SelectItem>
-                          ))
-                        )}
+                          )}
+                        />
                       </>
                     )}
                   </SelectContent>
@@ -460,9 +559,24 @@ function App() {
                   }}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select token" />
+                    <SelectValue placeholder="Select token">
+                      {tokenBySymbol.get(formState.tokenOut) ? (
+                        <>
+                          <span className="font-mono">
+                            {tokenBySymbol.get(formState.tokenOut)?.symbol}
+                          </span>
+                          <span className="text-slate-500">
+                            {tokenBySymbol.get(formState.tokenOut)?.name}
+                          </span>
+                        </>
+                      ) : null}
+                    </SelectValue>
                   </SelectTrigger>
-                  <SelectContent className="max-h-72">
+                  <SelectContent
+                    position="popper"
+                    align="start"
+                    className="h-80 w-[var(--radix-select-trigger-width)] overflow-hidden"
+                  >
                     {isTokenOutOpen && (
                       <>
                         <div className="sticky top-0 z-10 bg-white p-2">
@@ -476,20 +590,22 @@ function App() {
                             className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
                           />
                         </div>
-                        {tokenOutOptions.length === 0 ? (
-                          <div className="px-3 py-2 text-sm text-slate-500">
-                            No tokens found
-                          </div>
-                        ) : (
-                          tokenOutOptions.map((token) => (
-                            <SelectItem key={token.symbol} value={getTokenValue(token)}>
-                              <span className="font-mono">{token.symbol}</span>
-                              <span className="text-slate-500">
+                        <VirtualTokenList
+                          items={tokenOutOptions}
+                          emptyMessage="No tokens found"
+                          renderItem={(token) => (
+                            <SelectItem
+                              key={token.symbol}
+                              value={getTokenValue(token)}
+                              className="h-9 whitespace-nowrap"
+                            >
+                              <span className="font-mono shrink-0">{token.symbol}</span>
+                              <span className="text-slate-500 truncate">
                                 {token.name}
                               </span>
                             </SelectItem>
-                          ))
-                        )}
+                          )}
+                        />
                       </>
                     )}
                   </SelectContent>
