@@ -125,6 +125,80 @@ const formatTokenInput = (value: string, decimals: number, digits = 6) => {
 	}
 };
 
+const stringifyRawResponse = (value: unknown) => {
+	try {
+		return JSON.stringify(value, null, 2);
+	} catch {
+		return "";
+	}
+};
+
+const RawResponseCell = ({
+	value,
+	failed,
+}: {
+	value: unknown;
+	failed: boolean;
+}) => {
+	const [copied, setCopied] = useState(false);
+	const timeoutRef = useRef<number | null>(null);
+	const rawText = useMemo(() => (value ? stringifyRawResponse(value) : ""), [value]);
+
+	useEffect(() => {
+		return () => {
+			if (timeoutRef.current) {
+				window.clearTimeout(timeoutRef.current);
+			}
+		};
+	}, []);
+
+	if (failed || !rawText) {
+		return <span className="text-slate-400">—</span>;
+	}
+
+	const handleCopy = async () => {
+		try {
+			await navigator.clipboard.writeText(rawText);
+			setCopied(true);
+			if (timeoutRef.current) {
+				window.clearTimeout(timeoutRef.current);
+			}
+			timeoutRef.current = window.setTimeout(() => {
+				setCopied(false);
+			}, 1500);
+		} catch {
+			// Ignore clipboard failures.
+		}
+	};
+
+	return (
+		<div className="flex items-center gap-2">
+			<Popover>
+				<PopoverTrigger asChild>
+					<button
+						type="button"
+						className="text-slate-600 underline decoration-dotted underline-offset-4"
+					>
+						View
+					</button>
+				</PopoverTrigger>
+				<PopoverContent align="start" className="bg-white">
+					<div className="max-h-72 w-80 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">
+						<pre className="whitespace-pre-wrap">{rawText}</pre>
+					</div>
+				</PopoverContent>
+			</Popover>
+			<button
+				type="button"
+				onClick={handleCopy}
+				className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+			>
+				{copied ? "Copied" : "Copy"}
+			</button>
+		</div>
+	);
+};
+
 const parseTokenInput = (value: string, decimals: number) => {
 	const trimmed = value.trim();
 	if (!trimmed) {
@@ -290,15 +364,15 @@ function App() {
 	const tokenListQuery = useQuery({
 		queryKey: ["token-list"],
 		queryFn: () => getTokenList(),
+    staleTime: 60 * 60 * 1000, // 1 hour
 	});
 
-  // 
   const gasPriceTokenIn = useMemo(() => {
     if (!query.data?.gasPriceTokenIn) {
       return null;
     }
     try {
-      const result = new BigNumber(search.tokenAmount).dividedBy(query.data.gasPriceTokenIn);
+      const result = new BigNumber(search.tokenAmount).multipliedBy(BigNumber(2).pow(96)).dividedBy(query.data.gasPriceTokenIn);
       return result.toString(); 
     } catch (e) {
       console.error("Failed to scale gas price in token in:", e);
@@ -437,6 +511,26 @@ function App() {
 					}
 					return value.join(", ");
 				},
+			}),
+			columnHelper.accessor("rawResponse", {
+				header: "Raw",
+				enableSorting: false,
+				cell: (info) => (
+					<RawResponseCell
+						value={info.getValue()}
+						failed={info.row.original.failed ?? false}
+					/>
+				),
+			}),
+			columnHelper.accessor("calldataResponse", {
+				header: "Calldata",
+				enableSorting: false,
+				cell: (info) => (
+					<RawResponseCell
+						value={info.getValue()}
+						failed={info.row.original.failed ?? false}
+					/>
+				),
 			}),
 			columnHelper.accessor("netOutput", {
 				header: "Net",

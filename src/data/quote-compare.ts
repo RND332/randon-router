@@ -1,6 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import cloudscraper from "cloudscraper";
 import BigNumber from "bignumber.js";
+import { randomUUID } from "crypto";
+
+declare global {
+	var __inchIdCounter: number | undefined;
+}
 
 export type OrderBy = "score" | "net" | "output";
 
@@ -17,6 +22,8 @@ type RawQuote = {
 	amountOut: string | null;
 	gasUsed: number | null;
 	sources: string[] | null;
+	rawResponse?: {} | null | undefined;
+	calldataResponse?: unknown;
 	failed?: boolean;
 };
 
@@ -113,6 +120,7 @@ const fetchJson = async (
 		"content-type": "application/json",
 		...(init?.headers ?? {}),
 	};
+	const body = init?.body;
 
 	const requestOptions: Record<string, unknown> = {
 		uri: url,
@@ -122,6 +130,10 @@ const fetchJson = async (
 		timeout: 20000,
 	};
 
+	if (body !== undefined) {
+		requestOptions.body = body;
+	}
+
 	if (options?.strictSSL === false) {
 		requestOptions.strictSSL = false;
 	}
@@ -129,6 +141,20 @@ const fetchJson = async (
 	return scraper(requestOptions);
 };
 
+async function postScraperJson(url: string, payload: unknown, token: string) {
+	return fetchJson(
+		url,
+		{
+			method: "POST",
+			body: payload,
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Bearer ${token}`,
+			},
+		},
+		{ strictSSL: false },
+	);
+}
 const tokenListUrl =
 	"https://deswap.debridge.finance/v1.0/token-list?chainId=1";
 const tokenListCacheTtl = 10 * 60;
@@ -140,6 +166,7 @@ const toNumber = (value: unknown, fallback = 0) => {
 };
 
 const normalizeTokenList = (raw: unknown): Token[] => {
+	console.log("Normalizing token list data...");
 	const tokenSource = (raw as any)?.tokens ?? raw;
 	const tokens = Array.isArray(tokenSource)
 		? tokenSource
@@ -147,7 +174,7 @@ const normalizeTokenList = (raw: unknown): Token[] => {
 			? Object.values(tokenSource as Record<string, unknown>)
 			: [];
 
-	return tokens
+	const readyTokens =  tokens
 		.filter(
 			(item: any) =>
 				typeof item?.symbol === "string" && typeof item?.address === "string",
@@ -159,23 +186,29 @@ const normalizeTokenList = (raw: unknown): Token[] => {
 			decimals: toNumber(item.decimals, 18),
 			priceUsd: toNumber(item.priceUSD ?? item.priceUsd, 0),
 		}));
+		console.log(`Normalized ${readyTokens.length} tokens from raw data.`);
+	return readyTokens;
 };
 
 const fetchTokenList = async () => {
 	if (typeof fetch === "function") {
 		try {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 10000);
 			const response = await fetch(tokenListUrl, {
 				method: "GET",
 				headers: {
 					accept: "application/json",
 				},
+				signal: controller.signal,
 			});
+			clearTimeout(timeout);
 			if (!response.ok) {
 				throw new Error(`Token list fetch failed: ${response.status}`);
 			}
 			return response.json();
 		} catch {
-			// Fall through to scraper-based fetch.
+			console.log("Fetch failed, falling back to scraper...");
 		}
 	}
 
@@ -228,7 +261,11 @@ const fallbackQuote = (aggregator: string): RawQuote => ({
 	amountOut: "0",
 	gasUsed: 0,
 	sources: [],
+	rawResponse: undefined,
+	calldataResponse: null,
 });
+
+const calldataAggregators = new Set(["1Inch", "KyberSwap"]);
 
 let matchaCache: { token: string; exp: number } | null = null;
 let inchCache: { token: string; exp: number } | null = null;
@@ -298,6 +335,7 @@ const callBlazingNew = async (
 			: "0",
 		gasUsed: Number(res.gas_used ?? 0),
 		sources,
+		rawResponse: res,
 	};
 };
 
@@ -308,6 +346,7 @@ const kyberswap = async (
 ): Promise<RawQuote> => {
 	const url = `https://aggregator-api.kyberswap.com/ethereum/api/v1/routes?tokenIn=${tokenIn.address}&tokenOut=${tokenOut.address}&amountIn=${amountIn}&gasInclude=true`;
 	const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
+	
 	const summary = res?.data?.routeSummary;
 	if (!summary) {
 		return fallbackQuote("KyberSwap");
@@ -328,11 +367,26 @@ const kyberswap = async (
 		),
 	);
 
+	let calldataResponse: unknown = null;
+	if (calldataAggregators.has("KyberSwap")) {
+		try {
+			calldataResponse = await postScraperJson(
+				"https://aggregator-api.kyberswap.com/ethereum/api/v1/route/build",
+				res,
+				"eyJhbGciOiJSUzI1NiIsImtpZCI6IjYxZTIyYTA4LTYyYWQtNDYwMC04MGIzLWFlMDljNTIzOGNmMSIsInR5cCI6IkpXVCJ9.eyJhdWQiOltdLCJjbGllbnRfaWQiOiI4YTk1Y2VkOC0xNTMwLTQ1ZDAtYmMxNS1hNTYxNGQxZDhkMDgiLCJleHAiOjE3NzA3NjE0MTMsImV4dCI6e30sImlhdCI6MTc3MDc1NzgxMywiaXNzIjoiaHR0cHM6Ly9vYXV0aC1hcGkua3liZXJzd2FwLmNvbS8iLCJqdGkiOiJlOTAzN2I3MS04NDQ1LTQ2MGMtOWI3Yy05YzJmNWZhNThkYTciLCJuYmYiOjE3NzA3NTc4MTMsInNjcCI6W10sInN1YiI6IjM2ZDBlMmVhLTFhOTQtNDc3NC1iNjE1LTNiOGQyMmZjMTQxMCJ9.nVEf7izHsem5eCaGw1zNuAl7_pGm3Ypcq-Kg9tCQEJhHoeUKaIAYJaoxLPqS4Ce0kJV3cqVkYzEYcetz3YkhslS7k_7rapVJush7G0U2KGI4sHApGab1y9nzDP4aAytt05NHEp5UBikGmlsUWCUlukMdSuJ-J2gBGAcrHh58ZqQuYq94wKxKA31X0_W3X-jMulkvEnUMH_VdUmWkVn8WPv34f6bDeWUncF3uhia8bL4mtwrSzBxtL68Eu7SLIuZZrExAxou1BiSJJ6mvy2pgc_XLiRBcnhwUjDwmlnM0ZJ2NuYtFmHsMnTs55mUZgdNziA6C2b1SxXa14WCDmOwssIeAAopa3OBGsEw56UGbJ3docmDDNRUGIrvrul7kaagq2qbiXDLSnBVUeMHJ9mMjL9pOUOfsT4eNTOcVhfqxho8L1TWxbPrAjiCtNwjQlHaJ_N4t-i9Wpx6Sh8M8cRyieDWCpJLF5uD8-jDpImYp88kQQnrNft2HNhckCC-LzLwe8hmb0kZRexf8IfJVN4hBqOhYYKgAvpTN5i0dsIeNUzJWLd5EYww_pM5MMIOqje5-NeeGTpEK0PZ92YXegjT34bsBP8D5e9E-2tCp3iI7nLo2HuFw9CWNm-DsKYC3nHczhXBu6h0T6D2ykUD-6haR0cYAy8poEvEi7QRzaHlGTwE"
+			);
+		} catch (error) {
+			// console.warn("KyberSwap calldata build failed", error);
+		}
+	}
+
 	return {
 		aggregator: "KyberSwap",
 		amountOut: summary.amountOut ? String(summary.amountOut) : "0",
 		gasUsed: Number(summary.gas ?? 0),
 		sources,
+		rawResponse: res,
+		calldataResponse,
 	};
 };
 
@@ -365,6 +419,7 @@ const zeroEx = async (
 		amountOut: res?.buyAmount ? String(res.buyAmount) : "0",
 		gasUsed: Number(res?.transaction?.gas ?? 0),
 		sources,
+		rawResponse: res,
 	};
 };
 
@@ -374,7 +429,7 @@ const matcha = async (
 	amountIn: string,
 ): Promise<RawQuote> => {
 	const jwt = await getMatchaToken();
-	const url = `https://matcha.xyz/api/swap/price?chainId=1&buyToken=${tokenOut.address}&sellToken=${tokenIn.address}&sellAmount=${amountIn}&useIntents=true`;
+	const url = `https://matcha.xyz/api/swap/quote?chainId=1&buyToken=${tokenOut.address}&sellToken=${tokenIn.address}&sellAmount=${amountIn}&useIntents=true&taker=0x663DC15D3C1aC63ff12E45Ab68FeA3F0a883C251&slippageBps=50`;
 	const res = await fetchJson(url, {
 		method: "GET",
 		headers: {
@@ -390,8 +445,9 @@ const matcha = async (
 	return {
 		aggregator: "Matcha",
 		amountOut: res?.buyAmount ? String(res.buyAmount) : "0",
-		gasUsed: Number(res?.gas ?? 0),
+		gasUsed: Number(res?.transaction?.gas ?? 0),
 		sources,
+		rawResponse: res,
 	};
 };
 
@@ -400,14 +456,18 @@ const inch = async (
 	tokenOut: Token,
 	amountIn: string,
 ): Promise<RawQuote> => {
-	const token = await getInchToken();
 	const url = `https://proxy-app.1inch.io/v2.0/v2.2/chain/1/router/v6/quotesv2?fromTokenAddress=${tokenIn.address}&toTokenAddress=${tokenOut.address}&amount=${amountIn}&gasPrice=148636342&preset=maxReturnResult&walletAddress=0x40aFEfb746b5D79cecfD889D48Fd1bc617deaA23&excludedProtocols=PMM1,PMM2,PMM3,PMM4,PMM5,PMM6,PMM7,PMM8,PMM9,PMM10,PMM11,PMM12,PMM13,PMM14,PMM15,PMM16`;
+	const token = await getInchToken();
 	const res = await fetchJson(url, {
 		method: "GET",
 		headers: {
+		"content-type": "application/json",
+
 			Authorization: `Bearer ${token}`,
 		},
 	});
+
+	console.log("1Inch quote response:", res);
 
 	const levels = res?.bestResult?.levels;
 	const sources = Array.isArray(levels)
@@ -422,13 +482,44 @@ const inch = async (
 			)
 		: [];
 
+	let calldataResponse: unknown = null;
+	if (calldataAggregators.has("1Inch")) {
+		try {
+			// Track request ID counter
+			if (!globalThis.__inchIdCounter) {
+				globalThis.__inchIdCounter = 0;
+			}
+			
+			const uuidv4 = randomUUID();
+			const requestId = `1dd1f0a7-ecbf-45ee-ad33-410b80679ccf:1`;
+			globalThis.__inchIdCounter++;
+			
+			const data = {
+				enableEstimate: true,
+				expectedReturnAmount: res?.bestResult?.tokenAmount ? String(res.bestResult.tokenAmount) : "0",
+				fromTokenAddress: tokenIn.address,
+				fromTokenAmount: amountIn,
+				gasPrice: res?.bestResult?.gas,
+				id: requestId,
+				slippage: 0.5,
+				toTokenAddress: tokenOut.address,
+				walletAddress: "0xEDfe2dC6191eA576664Ac9D25f5A47CAc8EbC15a"
+			}
+			console.log("Building calldata with data:", data);
+			const buildUrl = `https://proxy-app.1inch.io/v2.0/bff/v1.0/v6.0/1/build?version=2`;
+			calldataResponse = await postScraperJson(buildUrl, data, token);
+		} catch (error) {
+			console.warn("1Inch calldata build failed", error);
+		}
+	}
+
 	return {
 		aggregator: "1Inch",
-		amountOut: res?.bestResult?.tokenAmount
-			? String(res.bestResult.tokenAmount)
-			: "0",
+		amountOut: res?.bestResult?.tokenAmount ? String(res.bestResult.tokenAmount) : "0",
 		gasUsed: Number(res?.bestResult?.gas ?? 0),
 		sources,
+		rawResponse: res,
+		calldataResponse,
 	};
 };
 
@@ -447,6 +538,7 @@ const settleQuotes = async (tasks: QuoteTask[]) => {
 					amountOut: null,
 					gasUsed: null,
 					sources: null,
+					rawResponse: null,
 					failed: true,
 				},
 	);
@@ -564,6 +656,7 @@ export const getQuoteComparison = createServerFn({
 })
 	.inputValidator((data: QuoteComparisonInput) => data)
 	.handler(async ({ data }): Promise<QuoteComparisonResult> => {
+		console.log("Start getQuoteComparison");
 	const tokenInSymbol = data?.tokenIn ?? "WETH";
 	const tokenOutSymbol = data?.tokenOut ?? "WBTC";
 	const tokenAmount = data?.tokenAmount ?? "1000000000000000000";
@@ -669,3 +762,6 @@ export const getQuoteComparison = createServerFn({
 		};
 	}
 });
+const getKyberToken = () => {
+	return "eyJhbGciOiJSUzI1NiIsImtpZCI6IjYxZTIyYTA4LTYyYWQtNDYwMC04MGIzLWFlMDljNTIzOGNmMSIsInR5cCI6IkpXVCJ9.eyJhdWQiOltdLCJjbGllbnRfaWQiOiI4YTk1Y2VkOC0xNTMwLTQ1ZDAtYmMxNS1hNTYxNGQxZDhkMDgiLCJleHAiOjE3NzA3NjE0MTMsImV4dCI6e30sImlhdCI6MTc3MDc1NzgxMywiaXNzIjoiaHR0cHM6Ly9vYXV0aC1hcGkua3liZXJzd2FwLmNvbS8iLCJqdGkiOiJlOTAzN2I3MS04NDQ1LTQ2MGMtOWI3Yy05YzJmNWZhNThkYTciLCJuYmYiOjE3NzA3NTc4MTMsInNjcCI6W10sInN1YiI6IjM2ZDBlMmVhLTFhOTQtNDc3NC1iNjE1LTNiOGQyMmZjMTQxMCJ9.nVEf7izHsem5eCaGw1zNuAl7_pGm3Ypcq-Kg9tCQEJhHoeUKaIAYJaoxLPqS4Ce0kJV3cqVkYzEYcetz3YkhslS7k_7rapVJush7G0U2KGI4sHApGab1y9nzDP4aAytt05NHEp5UBikGmlsUWCUlukMdSuJ-J2gBGAcrHh58ZqQuYq94wKxKA31X0_W3X-jMulkvEnUMH_VdUmWkVn8WPv34f6bDeWUncF3uhia8bL4mtwrSzBxtL68Eu7SLIuZZrExAxou1BiSJJ6mvy2pgc_XLiRBcnhwUjDwmlnM0ZJ2NuYtFmHsMnTs55mUZgdNziA6C2b1SxXa14WCDmOwssIeAAopa3OBGsEw56UGbJ3docmDDNRUGIrvrul7kaagq2qbiXDLSnBVUeMHJ9mMjL9pOUOfsT4eNTOcVhfqxho8L1TWxbPrAjiCtNwjQlHaJ_N4t-i9Wpx6Sh8M8cRyieDWCpJLF5uD8-jDpImYp88kQQnrNft2HNhckCC-LzLwe8hmb0kZRexf8IfJVN4hBqOhYYKgAvpTN5i0dsIeNUzJWLd5EYww_pM5MMIOqje5-NeeGTpEK0PZ92YXegjT34bsBP8D5e9E-2tCp3iI7nLo2HuFw9CWNm-DsKYC3nHczhXBu6h0T6D2ykUD-6haR0cYAy8poEvEi7QRzaHlGTwE";
+};

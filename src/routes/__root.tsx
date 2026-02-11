@@ -1,6 +1,7 @@
 import {
 	HeadContent,
 	Scripts,
+	Link,
 	createRootRouteWithContext,
 } from "@tanstack/react-router";
 import appCss from "../styles.css?url";
@@ -46,6 +47,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 	}),
 
 	shellComponent: RootDocument,
+	notFoundComponent: NotFound,
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
@@ -59,5 +61,23 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 				<Scripts />
 			</body>
 		</html>
+	);
+}
+
+function NotFound() {
+	return (
+		<div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-950 px-6 text-slate-100">
+			<h1 className="text-2xl font-semibold">Page not found</h1>
+			<p className="max-w-md text-center text-sm text-slate-300">
+				This route does not exist. Check the URL or return to the quote
+				comparison.
+			</p>
+			<Link
+				to="/"
+				className="rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold transition hover:border-slate-500"
+			>
+				Go to dashboard
+			</Link>
+		</div>
 	);
 }
