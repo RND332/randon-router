@@ -366,17 +366,27 @@ const kyberswap = async (
 			),
 		),
 	);
-
 	let calldataResponse: unknown = null;
 	if (calldataAggregators.has("KyberSwap")) {
+		let deadline = Math.floor((Date.now() / 1000) + 2 * 60);
 		try {
 			calldataResponse = await postScraperJson(
 				"https://aggregator-api.kyberswap.com/ethereum/api/v1/route/build",
-				res,
+				{
+					routeSummary: res.data.routeSummary,
+					deadline: deadline,
+					enableGasEstimation: false,
+					recipient: "0x40aFEfb746b5D79cecfD889D48Fd1bc617deaA23",
+					referral: "",
+					sender: "0x40aFEfb746b5D79cecfD889D48Fd1bc617deaA23",
+					skipSimulateTx: true,
+					slippageTolerance: 50,
+					source: "kyberswap",
+				},
 				"eyJhbGciOiJSUzI1NiIsImtpZCI6IjYxZTIyYTA4LTYyYWQtNDYwMC04MGIzLWFlMDljNTIzOGNmMSIsInR5cCI6IkpXVCJ9.eyJhdWQiOltdLCJjbGllbnRfaWQiOiI4YTk1Y2VkOC0xNTMwLTQ1ZDAtYmMxNS1hNTYxNGQxZDhkMDgiLCJleHAiOjE3NzA3NjE0MTMsImV4dCI6e30sImlhdCI6MTc3MDc1NzgxMywiaXNzIjoiaHR0cHM6Ly9vYXV0aC1hcGkua3liZXJzd2FwLmNvbS8iLCJqdGkiOiJlOTAzN2I3MS04NDQ1LTQ2MGMtOWI3Yy05YzJmNWZhNThkYTciLCJuYmYiOjE3NzA3NTc4MTMsInNjcCI6W10sInN1YiI6IjM2ZDBlMmVhLTFhOTQtNDc3NC1iNjE1LTNiOGQyMmZjMTQxMCJ9.nVEf7izHsem5eCaGw1zNuAl7_pGm3Ypcq-Kg9tCQEJhHoeUKaIAYJaoxLPqS4Ce0kJV3cqVkYzEYcetz3YkhslS7k_7rapVJush7G0U2KGI4sHApGab1y9nzDP4aAytt05NHEp5UBikGmlsUWCUlukMdSuJ-J2gBGAcrHh58ZqQuYq94wKxKA31X0_W3X-jMulkvEnUMH_VdUmWkVn8WPv34f6bDeWUncF3uhia8bL4mtwrSzBxtL68Eu7SLIuZZrExAxou1BiSJJ6mvy2pgc_XLiRBcnhwUjDwmlnM0ZJ2NuYtFmHsMnTs55mUZgdNziA6C2b1SxXa14WCDmOwssIeAAopa3OBGsEw56UGbJ3docmDDNRUGIrvrul7kaagq2qbiXDLSnBVUeMHJ9mMjL9pOUOfsT4eNTOcVhfqxho8L1TWxbPrAjiCtNwjQlHaJ_N4t-i9Wpx6Sh8M8cRyieDWCpJLF5uD8-jDpImYp88kQQnrNft2HNhckCC-LzLwe8hmb0kZRexf8IfJVN4hBqOhYYKgAvpTN5i0dsIeNUzJWLd5EYww_pM5MMIOqje5-NeeGTpEK0PZ92YXegjT34bsBP8D5e9E-2tCp3iI7nLo2HuFw9CWNm-DsKYC3nHczhXBu6h0T6D2ykUD-6haR0cYAy8poEvEi7QRzaHlGTwE"
 			);
 		} catch (error) {
-			// console.warn("KyberSwap calldata build failed", error);
+			console.warn("KyberSwap calldata build failed", error);
 		}
 	}
 
@@ -467,7 +477,6 @@ const inch = async (
 		},
 	});
 
-	console.log("1Inch quote response:", res);
 
 	const levels = res?.bestResult?.levels;
 	const sources = Array.isArray(levels)
@@ -490,12 +499,12 @@ const inch = async (
 				globalThis.__inchIdCounter = 0;
 			}
 			
-			const uuidv4 = randomUUID();
-			const requestId = `1dd1f0a7-ecbf-45ee-ad33-410b80679ccf:1`;
+			const requestId = randomUUID();
+			// const requestId = `1dd1f0a7-ecbf-45ee-ad33-410b80679ccf:1`;
 			globalThis.__inchIdCounter++;
 			
 			const data = {
-				enableEstimate: true,
+				enableEstimate: false,
 				expectedReturnAmount: res?.bestResult?.tokenAmount ? String(res.bestResult.tokenAmount) : "0",
 				fromTokenAddress: tokenIn.address,
 				fromTokenAmount: amountIn,
@@ -505,7 +514,6 @@ const inch = async (
 				toTokenAddress: tokenOut.address,
 				walletAddress: "0xEDfe2dC6191eA576664Ac9D25f5A47CAc8EbC15a"
 			}
-			console.log("Building calldata with data:", data);
 			const buildUrl = `https://proxy-app.1inch.io/v2.0/bff/v1.0/v6.0/1/build?version=2`;
 			calldataResponse = await postScraperJson(buildUrl, data, token);
 		} catch (error) {
