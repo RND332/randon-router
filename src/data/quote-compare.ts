@@ -109,6 +109,7 @@ export const fallbackTokenList = Object.values(fallbackTokensBySymbol);
 const chunkSizes = [1, 5, 10, 15, 20, 30, 50, 75, 100, 125, 150, 200];
 const recipient = "0x40afefb746b5d79cecfd889d48fd1bc617deaa23"
 const sender = "0x40afefb746b5d79cecfd889d48fd1bc617deaa23"
+const debrigdeRouter = "0x663dc15d3c1ac63ff12e45ab68fea3f0a883c251"
 
 type ScraperOptions = {
 	strictSSL?: boolean;
@@ -154,10 +155,11 @@ const simulate = async (
 	calldata: Calldata,
 	tokenIn: string,
 	outputToken: string,
-	tokenInAmount: string
+	tokenInAmount: string,
+	senderAddress: string = sender
 ) => {
 	return fetchJson(
-		"https://dc1.invisium.com/simulation/ethereum/sim-dln-output-amount",
+		"https://dev.invisium.com/simulation/ethereum/sim-dln-output-amount",
 		{
 			method: "POST",
 			body: {
@@ -166,7 +168,7 @@ const simulate = async (
 				tokenIn,
 				tokenInAmount,
 				tx: {
-					from: sender,
+					from: senderAddress,
 					to: calldata.to,
 					input: calldata.data
 				}
@@ -378,7 +380,7 @@ const callBlazingNew = async (
 	const calldata = {to: res.settler_address, data: res.call};
 	let simulation = null;
 	try {
-		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
+		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn, debrigdeRouter);
 	} catch (error) {
 		console.warn("BlazingRouter failed simulation");
 	}
@@ -427,7 +429,7 @@ const kyberswap = async (
 	);
 	let calldataResponse: any | null = null;
 	if (calldataAggregators.has("KyberSwap")) {
-		let deadline = Math.floor((Date.now() / 1000) + 2 * 60);
+		let deadline = Math.floor((Date.now() / 1000) + 10 * 60);
 		try {
 			calldataResponse = await postScraperJson(
 				"https://aggregator-api.kyberswap.com/ethereum/api/v1/route/build",
@@ -439,7 +441,7 @@ const kyberswap = async (
 					referral: "",
 					sender: sender,
 					skipSimulateTx: true,
-					slippageTolerance: 50,
+					slippageTolerance: 5000,
 					source: "kyberswap",
 				},
 				"eyJhbGciOiJSUzI1NiIsImtpZCI6IjYxZTIyYTA4LTYyYWQtNDYwMC04MGIzLWFlMDljNTIzOGNmMSIsInR5cCI6IkpXVCJ9.eyJhdWQiOltdLCJjbGllbnRfaWQiOiI4YTk1Y2VkOC0xNTMwLTQ1ZDAtYmMxNS1hNTYxNGQxZDhkMDgiLCJleHAiOjE3NzA3NjE0MTMsImV4dCI6e30sImlhdCI6MTc3MDc1NzgxMywiaXNzIjoiaHR0cHM6Ly9vYXV0aC1hcGkua3liZXJzd2FwLmNvbS8iLCJqdGkiOiJlOTAzN2I3MS04NDQ1LTQ2MGMtOWI3Yy05YzJmNWZhNThkYTciLCJuYmYiOjE3NzA3NTc4MTMsInNjcCI6W10sInN1YiI6IjM2ZDBlMmVhLTFhOTQtNDc3NC1iNjE1LTNiOGQyMmZjMTQxMCJ9.nVEf7izHsem5eCaGw1zNuAl7_pGm3Ypcq-Kg9tCQEJhHoeUKaIAYJaoxLPqS4Ce0kJV3cqVkYzEYcetz3YkhslS7k_7rapVJush7G0U2KGI4sHApGab1y9nzDP4aAytt05NHEp5UBikGmlsUWCUlukMdSuJ-J2gBGAcrHh58ZqQuYq94wKxKA31X0_W3X-jMulkvEnUMH_VdUmWkVn8WPv34f6bDeWUncF3uhia8bL4mtwrSzBxtL68Eu7SLIuZZrExAxou1BiSJJ6mvy2pgc_XLiRBcnhwUjDwmlnM0ZJ2NuYtFmHsMnTs55mUZgdNziA6C2b1SxXa14WCDmOwssIeAAopa3OBGsEw56UGbJ3docmDDNRUGIrvrul7kaagq2qbiXDLSnBVUeMHJ9mMjL9pOUOfsT4eNTOcVhfqxho8L1TWxbPrAjiCtNwjQlHaJ_N4t-i9Wpx6Sh8M8cRyieDWCpJLF5uD8-jDpImYp88kQQnrNft2HNhckCC-LzLwe8hmb0kZRexf8IfJVN4hBqOhYYKgAvpTN5i0dsIeNUzJWLd5EYww_pM5MMIOqje5-NeeGTpEK0PZ92YXegjT34bsBP8D5e9E-2tCp3iI7nLo2HuFw9CWNm-DsKYC3nHczhXBu6h0T6D2ykUD-6haR0cYAy8poEvEi7QRzaHlGTwE"
@@ -448,13 +450,15 @@ const kyberswap = async (
 			console.warn("KyberSwap calldata build failed", error);
 		}
 	}
-	const calldata = {to: calldataResponse.routerAddress, data: calldataResponse.data};
+	const calldata = {to: calldataResponse.data.routerAddress, data: calldataResponse.data.data};
+
 	let simulation = null;
 	try {
 		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
 	} catch (error) {
 		console.warn("KyberSwap failed simulation");
 	}
+
 	return {
 		aggregator: "KyberSwap",
 		amountOut: summary.amountOut ? String(summary.amountOut) : "0",
@@ -497,6 +501,7 @@ const zeroEx = async (
 	} catch (error) {
 		console.warn("0x failed simulation");
 	}
+
 	return {
 		aggregator: "0x",
 		amountOut: res?.buyAmount ? String(res.buyAmount) : "0",
@@ -521,11 +526,19 @@ const matcha = async (
 			"x-matcha-jwt": jwt,
 		},
 	});
-
+	
 	const fills = res?.route?.fills;
 	const sources = Array.isArray(fills)
 		? fills.map((fill: { source: string }) => fill.source)
 		: [];
+
+	const calldata = {to: res.transaction.to, data: res.transaction.data};
+	let simulation = null;
+	try {
+		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
+	} catch (error) {
+		console.warn("Matcha failed simulation");
+	}
 
 	return {
 		aggregator: "Matcha",
@@ -533,8 +546,8 @@ const matcha = async (
 		gasUsed: Number(res?.transaction?.gas ?? 0),
 		sources,
 		rawResponse: res,
-		calldataResponse: null,
-		simulationResult: null
+		calldataResponse: calldata,
+		simulationResult: simulation
 	};
 };
 
@@ -543,7 +556,7 @@ const inch = async (
 	tokenOut: Token,
 	amountIn: string,
 ): Promise<RawQuote> => {
-	const url = `https://proxy-app.1inch.io/v2.0/v2.2/chain/1/router/v6/quotesv2?fromTokenAddress=${tokenIn.address}&toTokenAddress=${tokenOut.address}&amount=${amountIn}&gasPrice=148636342&preset=maxReturnResult&walletAddress=${recipient}&excludedProtocols=PMM1,PMM2,PMM3,PMM4,PMM5,PMM6,PMM7,PMM8,PMM9,PMM10,PMM11,PMM12,PMM13,PMM14,PMM15,PMM16`;
+	const url = `https://proxy-app.1inch.io/v2.0/v2.2/chain/1/router/v6/quotesv2?fromTokenAddress=${tokenIn.address}&toTokenAddress=${tokenOut.address}&amount=${amountIn}&gasPrice=148636342&preset=maxReturnResult&walletAddress=${sender}&excludedProtocols=PMM1,PMM2,PMM3,PMM4,PMM5,PMM6,PMM7,PMM8,PMM9,PMM10,PMM11,PMM12,PMM13,PMM14,PMM15,PMM16`;
 	const token = await getInchToken();
 	const res = await fetchJson(url, {
 		method: "GET",
@@ -587,7 +600,7 @@ const inch = async (
 				fromTokenAmount: amountIn,
 				gasPrice: res?.bestResult?.gas,
 				id: requestId,
-				slippage: 0.5,
+				slippage: 5,
 				toTokenAddress: tokenOut.address,
 				walletAddress: sender
 			}
@@ -827,7 +840,7 @@ export const getQuoteComparison = createServerFn({
 		if (order === "output") {
 			ordered.sort((a, b) => Number(b.amountOut) - Number(a.amountOut));
 		}
-		// console.log("RESULTS", ordered)
+
 		return {
 			tokenIn: tokenInSymbol,
 			tokenOut: tokenOutSymbol,
