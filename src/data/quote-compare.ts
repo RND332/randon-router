@@ -29,6 +29,7 @@ type RawQuote = {
 	sources: string[] | null;
 	rawResponse?: {} | null | undefined;
 	calldataResponse: Calldata | null;
+	simulationResult: any;
 	failed?: boolean;
 };
 
@@ -160,12 +161,12 @@ const simulate = async (
 		{
 			method: "POST",
 			body: {
-				recipient: "",
+				recipient: recipient,
 				outputToken,
 				tokenIn,
 				tokenInAmount,
 				tx: {
-					from: "",
+					from: sender,
 					to: calldata.to,
 					input: calldata.data
 				}
@@ -311,6 +312,7 @@ const fallbackQuote = (aggregator: string): RawQuote => ({
 	gasUsed: 0,
 	sources: [],
 	rawResponse: undefined,
+	simulationResult: undefined,
 	calldataResponse: null,
 });
 
@@ -373,7 +375,13 @@ const callBlazingNew = async (
 			sources.push(route.venue_type);
 		}
 	});
-
+	const calldata = {to: res.settler_address, data: res.call};
+	let simulation = null;
+	try {
+		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
+	} catch (error) {
+		console.warn("BlazingRouter failed simulation");
+	}
 	return {
 		aggregator:
 			chunkNumber === null
@@ -385,7 +393,8 @@ const callBlazingNew = async (
 		gasUsed: Number(res.gas_used ?? 0),
 		sources,
 		rawResponse: res,
-		calldataResponse: {to: res.settler_address, data: res.call}
+		calldataResponse: calldata,
+		simulationResult: simulation
 	};
 };
 
@@ -439,14 +448,21 @@ const kyberswap = async (
 			console.warn("KyberSwap calldata build failed", error);
 		}
 	}
-
+	const calldata = {to: calldataResponse.routerAddress, data: calldataResponse.data};
+	let simulation = null;
+	try {
+		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
+	} catch (error) {
+		console.warn("KyberSwap failed simulation");
+	}
 	return {
 		aggregator: "KyberSwap",
 		amountOut: summary.amountOut ? String(summary.amountOut) : "0",
 		gasUsed: Number(summary.gas ?? 0),
 		sources,
 		rawResponse: res,
-		calldataResponse: {to: calldataResponse.routerAddress, data: calldataResponse.data},
+		calldataResponse: calldata,
+		simulationResult: simulation
 	};
 };
 
@@ -474,13 +490,21 @@ const zeroEx = async (
 		? fills.map((fill: { source: string }) => fill.source)
 		: [];
 
+	const calldata = {to: res.transaction.to, data: res.transaction.data};
+	let simulation = null;
+	try {
+		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
+	} catch (error) {
+		console.warn("0x failed simulation");
+	}
 	return {
 		aggregator: "0x",
 		amountOut: res?.buyAmount ? String(res.buyAmount) : "0",
 		gasUsed: Number(res?.transaction?.gas ?? 0),
 		sources,
 		rawResponse: res,
-		calldataResponse: {to: res.transaction.to, data: res.transaction.data}
+		calldataResponse: calldata,
+		simulationResult: simulation
 	};
 };
 
@@ -509,7 +533,8 @@ const matcha = async (
 		gasUsed: Number(res?.transaction?.gas ?? 0),
 		sources,
 		rawResponse: res,
-		calldataResponse: null
+		calldataResponse: null,
+		simulationResult: null
 	};
 };
 
@@ -572,15 +597,21 @@ const inch = async (
 			console.warn("1Inch calldata build failed", error);
 		}
 	}
-
+	const calldata = {to: "0x111111125421cA6dc452d289314280a0f8842A65", data: calldataResponse.data};
+	let simulation = null;
+	try {
+		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
+	} catch (error) {
+		console.warn("1Inch failed simulation");
+	}
 	return {
 		aggregator: "1Inch",
 		amountOut: res?.bestResult?.tokenAmount ? String(res.bestResult.tokenAmount) : "0",
 		gasUsed: Number(res?.bestResult?.gas ?? 0),
 		sources,
 		rawResponse: res,
-		// TODO find what to call for inch
-		calldataResponse: {to: "", data: calldataResponse.data},
+		calldataResponse: calldata,
+		simulationResult: simulation
 	};
 };
 
@@ -796,7 +827,7 @@ export const getQuoteComparison = createServerFn({
 		if (order === "output") {
 			ordered.sort((a, b) => Number(b.amountOut) - Number(a.amountOut));
 		}
-
+		// console.log("RESULTS", ordered)
 		return {
 			tokenIn: tokenInSymbol,
 			tokenOut: tokenOutSymbol,
