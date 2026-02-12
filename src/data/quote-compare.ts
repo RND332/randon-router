@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
-import cloudscraper from "cloudscraper";
 import BigNumber from "bignumber.js";
 import { randomUUID } from "crypto";
+import { createRequire } from "module";
 
 declare global {
 	var __inchIdCounter: number | undefined;
@@ -23,19 +23,18 @@ type Token = {
 };
 
 type SimulationResult = {
-  balanceOfBefore: string
-  balanceOfAfter: string
-  outputTokenAmount: string
-  outputToken: string
-  approveTxGasUsed: number
-  swapTxGasUsed: number
-  isSuccessful: boolean
-  simBlockNumber: string
-  simTime: string
-  simTimeTotal: string
-  requestId: string
-}
-
+	balanceOfBefore: string;
+	balanceOfAfter: string;
+	outputTokenAmount: string;
+	outputToken: string;
+	approveTxGasUsed: number;
+	swapTxGasUsed: number;
+	isSuccessful: boolean;
+	simBlockNumber: string;
+	simTime: string;
+	simTimeTotal: string;
+	requestId: string;
+};
 
 type RawQuote = {
 	aggregator: string;
@@ -122,12 +121,17 @@ const fallbackTokensBySymbol: Record<string, Token> = {
 export const fallbackTokenList = Object.values(fallbackTokensBySymbol);
 
 const chunkSizes = [1, 5, 10, 15, 20, 30, 50, 75, 100, 125, 150, 200];
-const recipient = "0x40afefb746b5d79cecfd889d48fd1bc617deaa23"
-const sender = "0x40afefb746b5d79cecfd889d48fd1bc617deaa23"
-const debrigdeRouter = "0x663dc15d3c1ac63ff12e45ab68fea3f0a883c251"
+const recipient = "0x40afefb746b5d79cecfd889d48fd1bc617deaa23";
+const sender = "0x40afefb746b5d79cecfd889d48fd1bc617deaa23";
+const debrigdeRouter = "0x663dc15d3c1ac63ff12e45ab68fea3f0a883c251";
 
 type ScraperOptions = {
 	strictSSL?: boolean;
+};
+
+const require = createRequire(import.meta.url);
+const cloudscraper = require("cloudscraper") as {
+	defaults?: (options: { timeout: number }) => unknown;
 };
 
 const scraper = (cloudscraper as any).defaults
@@ -165,13 +169,12 @@ const fetchJson = async (
 	return scraper(requestOptions);
 };
 
-
 const simulate = async (
 	calldata: Calldata,
 	tokenIn: string,
 	outputToken: string,
 	tokenInAmount: string,
-	senderAddress: string = sender
+	senderAddress: string = sender,
 ) => {
 	return fetchJson(
 		"https://dev.invisium.com/simulation/ethereum/sim-dln-output-amount",
@@ -185,15 +188,15 @@ const simulate = async (
 				tx: {
 					from: senderAddress,
 					to: calldata.to,
-					input: calldata.data
-				}
+					input: calldata.data,
+				},
 			} as any,
 			headers: {
 				"content-type": "application/json",
 			},
-		}
+		},
 	);
-}
+};
 
 async function postScraperJson(url: string, payload: any, token: string) {
 	return fetchJson(
@@ -228,7 +231,7 @@ const normalizeTokenList = (raw: unknown): Token[] => {
 			? Object.values(tokenSource as Record<string, unknown>)
 			: [];
 
-	const readyTokens =  tokens
+	const readyTokens = tokens
 		.filter(
 			(item: any) =>
 				typeof item?.symbol === "string" && typeof item?.address === "string",
@@ -240,7 +243,7 @@ const normalizeTokenList = (raw: unknown): Token[] => {
 			decimals: toNumber(item.decimals, 18),
 			priceUsd: toNumber(item.priceUSD ?? item.priceUsd, 0),
 		}));
-		console.log(`Normalized ${readyTokens.length} tokens from raw data.`);
+	console.log(`Normalized ${readyTokens.length} tokens from raw data.`);
 	return readyTokens;
 };
 
@@ -379,10 +382,16 @@ const callBlazingNew = async (
 			sources.push(route.venue_type);
 		}
 	});
-	const calldata = {to: res.settler_address, data: res.call};
+	const calldata = { to: res.settler_address, data: res.call };
 	let simulation = null;
 	try {
-		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn, debrigdeRouter);
+		simulation = await simulate(
+			calldata,
+			tokenIn.address,
+			tokenOut.address,
+			amountIn,
+			debrigdeRouter,
+		);
 	} catch (error) {
 		console.warn("BlazingRouter failed simulation");
 	}
@@ -398,7 +407,7 @@ const callBlazingNew = async (
 		sources,
 		rawResponse: res,
 		calldataResponse: calldata,
-		simulationResult: simulation
+		simulationResult: simulation,
 	};
 };
 
@@ -409,7 +418,7 @@ const kyberswap = async (
 ): Promise<RawQuote> => {
 	const url = `https://aggregator-api.kyberswap.com/ethereum/api/v1/routes?tokenIn=${tokenIn.address}&tokenOut=${tokenOut.address}&amountIn=${amountIn}&gasInclude=true`;
 	const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
-	
+
 	const summary = res?.data?.routeSummary;
 	if (!summary) {
 		return fallbackQuote("KyberSwap");
@@ -431,7 +440,7 @@ const kyberswap = async (
 	);
 	let calldataResponse: any | null = null;
 	if (calldataAggregators.has("KyberSwap")) {
-		let deadline = Math.floor((Date.now() / 1000) + 10 * 60);
+		let deadline = Math.floor(Date.now() / 1000 + 10 * 60);
 		try {
 			calldataResponse = await postScraperJson(
 				"https://aggregator-api.kyberswap.com/ethereum/api/v1/route/build",
@@ -446,17 +455,25 @@ const kyberswap = async (
 					slippageTolerance: 5000,
 					source: "kyberswap",
 				},
-				"eyJhbGciOiJSUzI1NiIsImtpZCI6IjYxZTIyYTA4LTYyYWQtNDYwMC04MGIzLWFlMDljNTIzOGNmMSIsInR5cCI6IkpXVCJ9.eyJhdWQiOltdLCJjbGllbnRfaWQiOiI4YTk1Y2VkOC0xNTMwLTQ1ZDAtYmMxNS1hNTYxNGQxZDhkMDgiLCJleHAiOjE3NzA3NjE0MTMsImV4dCI6e30sImlhdCI6MTc3MDc1NzgxMywiaXNzIjoiaHR0cHM6Ly9vYXV0aC1hcGkua3liZXJzd2FwLmNvbS8iLCJqdGkiOiJlOTAzN2I3MS04NDQ1LTQ2MGMtOWI3Yy05YzJmNWZhNThkYTciLCJuYmYiOjE3NzA3NTc4MTMsInNjcCI6W10sInN1YiI6IjM2ZDBlMmVhLTFhOTQtNDc3NC1iNjE1LTNiOGQyMmZjMTQxMCJ9.nVEf7izHsem5eCaGw1zNuAl7_pGm3Ypcq-Kg9tCQEJhHoeUKaIAYJaoxLPqS4Ce0kJV3cqVkYzEYcetz3YkhslS7k_7rapVJush7G0U2KGI4sHApGab1y9nzDP4aAytt05NHEp5UBikGmlsUWCUlukMdSuJ-J2gBGAcrHh58ZqQuYq94wKxKA31X0_W3X-jMulkvEnUMH_VdUmWkVn8WPv34f6bDeWUncF3uhia8bL4mtwrSzBxtL68Eu7SLIuZZrExAxou1BiSJJ6mvy2pgc_XLiRBcnhwUjDwmlnM0ZJ2NuYtFmHsMnTs55mUZgdNziA6C2b1SxXa14WCDmOwssIeAAopa3OBGsEw56UGbJ3docmDDNRUGIrvrul7kaagq2qbiXDLSnBVUeMHJ9mMjL9pOUOfsT4eNTOcVhfqxho8L1TWxbPrAjiCtNwjQlHaJ_N4t-i9Wpx6Sh8M8cRyieDWCpJLF5uD8-jDpImYp88kQQnrNft2HNhckCC-LzLwe8hmb0kZRexf8IfJVN4hBqOhYYKgAvpTN5i0dsIeNUzJWLd5EYww_pM5MMIOqje5-NeeGTpEK0PZ92YXegjT34bsBP8D5e9E-2tCp3iI7nLo2HuFw9CWNm-DsKYC3nHczhXBu6h0T6D2ykUD-6haR0cYAy8poEvEi7QRzaHlGTwE"
+				"eyJhbGciOiJSUzI1NiIsImtpZCI6IjYxZTIyYTA4LTYyYWQtNDYwMC04MGIzLWFlMDljNTIzOGNmMSIsInR5cCI6IkpXVCJ9.eyJhdWQiOltdLCJjbGllbnRfaWQiOiI4YTk1Y2VkOC0xNTMwLTQ1ZDAtYmMxNS1hNTYxNGQxZDhkMDgiLCJleHAiOjE3NzA3NjE0MTMsImV4dCI6e30sImlhdCI6MTc3MDc1NzgxMywiaXNzIjoiaHR0cHM6Ly9vYXV0aC1hcGkua3liZXJzd2FwLmNvbS8iLCJqdGkiOiJlOTAzN2I3MS04NDQ1LTQ2MGMtOWI3Yy05YzJmNWZhNThkYTciLCJuYmYiOjE3NzA3NTc4MTMsInNjcCI6W10sInN1YiI6IjM2ZDBlMmVhLTFhOTQtNDc3NC1iNjE1LTNiOGQyMmZjMTQxMCJ9.nVEf7izHsem5eCaGw1zNuAl7_pGm3Ypcq-Kg9tCQEJhHoeUKaIAYJaoxLPqS4Ce0kJV3cqVkYzEYcetz3YkhslS7k_7rapVJush7G0U2KGI4sHApGab1y9nzDP4aAytt05NHEp5UBikGmlsUWCUlukMdSuJ-J2gBGAcrHh58ZqQuYq94wKxKA31X0_W3X-jMulkvEnUMH_VdUmWkVn8WPv34f6bDeWUncF3uhia8bL4mtwrSzBxtL68Eu7SLIuZZrExAxou1BiSJJ6mvy2pgc_XLiRBcnhwUjDwmlnM0ZJ2NuYtFmHsMnTs55mUZgdNziA6C2b1SxXa14WCDmOwssIeAAopa3OBGsEw56UGbJ3docmDDNRUGIrvrul7kaagq2qbiXDLSnBVUeMHJ9mMjL9pOUOfsT4eNTOcVhfqxho8L1TWxbPrAjiCtNwjQlHaJ_N4t-i9Wpx6Sh8M8cRyieDWCpJLF5uD8-jDpImYp88kQQnrNft2HNhckCC-LzLwe8hmb0kZRexf8IfJVN4hBqOhYYKgAvpTN5i0dsIeNUzJWLd5EYww_pM5MMIOqje5-NeeGTpEK0PZ92YXegjT34bsBP8D5e9E-2tCp3iI7nLo2HuFw9CWNm-DsKYC3nHczhXBu6h0T6D2ykUD-6haR0cYAy8poEvEi7QRzaHlGTwE",
 			);
 		} catch (error) {
 			console.warn("KyberSwap calldata build failed", error);
 		}
 	}
-	const calldata = {to: calldataResponse.data.routerAddress, data: calldataResponse.data.data};
+	const calldata = {
+		to: calldataResponse.data.routerAddress,
+		data: calldataResponse.data.data,
+	};
 
 	let simulation = null;
 	try {
-		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
+		simulation = await simulate(
+			calldata,
+			tokenIn.address,
+			tokenOut.address,
+			amountIn,
+		);
 	} catch (error) {
 		console.warn("KyberSwap failed simulation");
 	}
@@ -468,7 +485,7 @@ const kyberswap = async (
 		sources,
 		rawResponse: res,
 		calldataResponse: calldata,
-		simulationResult: simulation
+		simulationResult: simulation,
 	};
 };
 
@@ -496,10 +513,15 @@ const zeroEx = async (
 		? fills.map((fill: { source: string }) => fill.source)
 		: [];
 
-	const calldata = {to: res.transaction.to, data: res.transaction.data};
+	const calldata = { to: res.transaction.to, data: res.transaction.data };
 	let simulation = null;
 	try {
-		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
+		simulation = await simulate(
+			calldata,
+			tokenIn.address,
+			tokenOut.address,
+			amountIn,
+		);
 	} catch (error) {
 		console.warn("0x failed simulation");
 	}
@@ -511,7 +533,7 @@ const zeroEx = async (
 		sources,
 		rawResponse: res,
 		calldataResponse: calldata,
-		simulationResult: simulation
+		simulationResult: simulation,
 	};
 };
 
@@ -528,16 +550,21 @@ const matcha = async (
 			"x-matcha-jwt": jwt,
 		},
 	});
-	
+
 	const fills = res?.route?.fills;
 	const sources = Array.isArray(fills)
 		? fills.map((fill: { source: string }) => fill.source)
 		: [];
 
-	const calldata = {to: res.transaction.to, data: res.transaction.data};
+	const calldata = { to: res.transaction.to, data: res.transaction.data };
 	let simulation = null;
 	try {
-		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
+		simulation = await simulate(
+			calldata,
+			tokenIn.address,
+			tokenOut.address,
+			amountIn,
+		);
 	} catch (error) {
 		console.warn("Matcha failed simulation");
 	}
@@ -549,7 +576,7 @@ const matcha = async (
 		sources,
 		rawResponse: res,
 		calldataResponse: calldata,
-		simulationResult: simulation
+		simulationResult: simulation,
 	};
 };
 
@@ -563,12 +590,11 @@ const inch = async (
 	const res = await fetchJson(url, {
 		method: "GET",
 		headers: {
-		"content-type": "application/json",
+			"content-type": "application/json",
 
 			Authorization: `Bearer ${token}`,
 		},
 	});
-
 
 	const levels = res?.bestResult?.levels;
 	const sources = Array.isArray(levels)
@@ -590,43 +616,55 @@ const inch = async (
 			if (!globalThis.__inchIdCounter) {
 				globalThis.__inchIdCounter = 0;
 			}
-			
+
 			const requestId = randomUUID();
 			// const requestId = `1dd1f0a7-ecbf-45ee-ad33-410b80679ccf:1`;
 			globalThis.__inchIdCounter++;
-			
+
 			const data = {
 				enableEstimate: false,
-				expectedReturnAmount: res?.bestResult?.tokenAmount ? String(res.bestResult.tokenAmount) : "0",
+				expectedReturnAmount: res?.bestResult?.tokenAmount
+					? String(res.bestResult.tokenAmount)
+					: "0",
 				fromTokenAddress: tokenIn.address,
 				fromTokenAmount: amountIn,
 				gasPrice: res?.bestResult?.gas,
 				id: requestId,
 				slippage: 5,
 				toTokenAddress: tokenOut.address,
-				walletAddress: sender
-			}
+				walletAddress: sender,
+			};
 			const buildUrl = `https://proxy-app.1inch.io/v2.0/bff/v1.0/v6.0/1/build?version=2`;
 			calldataResponse = await postScraperJson(buildUrl, data, token);
 		} catch (error) {
 			console.warn("1Inch calldata build failed", error);
 		}
 	}
-	const calldata = {to: "0x111111125421cA6dc452d289314280a0f8842A65", data: calldataResponse.data};
+	const calldata = {
+		to: "0x111111125421cA6dc452d289314280a0f8842A65",
+		data: calldataResponse.data,
+	};
 	let simulation: SimulationResult | undefined = undefined;
 	try {
-		simulation = await simulate(calldata, tokenIn.address, tokenOut.address, amountIn);
+		simulation = await simulate(
+			calldata,
+			tokenIn.address,
+			tokenOut.address,
+			amountIn,
+		);
 	} catch (error) {
 		console.warn("1Inch failed simulation");
 	}
 	return {
 		aggregator: "1Inch",
-		amountOut: res?.bestResult?.tokenAmount ? String(res.bestResult.tokenAmount) : "0",
+		amountOut: res?.bestResult?.tokenAmount
+			? String(res.bestResult.tokenAmount)
+			: "0",
 		gasUsed: Number(res?.bestResult?.gas ?? 0),
 		sources,
 		rawResponse: res,
 		calldataResponse: calldata,
-		simulationResult: simulation
+		simulationResult: simulation,
 	};
 };
 
@@ -640,7 +678,7 @@ const settleQuotes = async (tasks: QuoteTask[]) => {
 	return results.map((result, index) =>
 		result.status === "fulfilled"
 			? result.value
-			: {
+			: ({
 					aggregator: tasks[index]?.label ?? "Unknown",
 					amountOut: null,
 					gasUsed: null,
@@ -649,7 +687,7 @@ const settleQuotes = async (tasks: QuoteTask[]) => {
 					calldataResponse: null,
 					simulationResult: undefined,
 					failed: true,
-				} satisfies RawQuote,
+				} satisfies RawQuote),
 	);
 };
 
@@ -688,11 +726,17 @@ const calculateScores = (
 
 	const withNet = raw.map((item) => {
 		const isFailed = item.amountOut === null || item.gasUsed === null;
-		const amountOut = item.amountOut === null ? new BigNumber(0) : new BigNumber(item.amountOut);
-		const gasUsed = item.gasUsed === null ? new BigNumber(0) : new BigNumber(item.gasUsed);
+		const amountOut =
+			item.amountOut === null
+				? new BigNumber(0)
+				: new BigNumber(item.amountOut);
+		const gasUsed =
+			item.gasUsed === null ? new BigNumber(0) : new BigNumber(item.gasUsed);
 		const gasCost = gasUsed.multipliedBy(gasPriceTokenIn);
 		const netOutput = tokenAmountNumber
-			? amountOut.minus(gasCost.multipliedBy(amountOut).dividedBy(tokenAmountNumber))
+			? amountOut.minus(
+					gasCost.multipliedBy(amountOut).dividedBy(tokenAmountNumber),
+				)
 			: amountOut;
 
 		return {
@@ -767,108 +811,108 @@ export const getQuoteComparison = createServerFn({
 	.inputValidator((data: QuoteComparisonInput) => data)
 	.handler(async ({ data }): Promise<QuoteComparisonResult> => {
 		console.log("Start getQuoteComparison");
-	const tokenInSymbol = data?.tokenIn ?? "WETH";
-	const tokenOutSymbol = data?.tokenOut ?? "WBTC";
-	const tokenAmount = data?.tokenAmount ?? "1000000000000000000";
-	const order = toOrder(data?.order);
-	const disablePrice = data?.disablePrice ?? "false";
+		const tokenInSymbol = data?.tokenIn ?? "WETH";
+		const tokenOutSymbol = data?.tokenOut ?? "WBTC";
+		const tokenAmount = data?.tokenAmount ?? "1000000000000000000";
+		const order = toOrder(data?.order);
+		const disablePrice = data?.disablePrice ?? "false";
 
-	try {
-		const tokenList = await getTokenListInternal();
-		const tokenIn =
-			findTokenBySymbol(tokenList, tokenInSymbol) ??
-			fallbackTokenBySymbol(tokenInSymbol);
-		const tokenOut =
-			findTokenBySymbol(tokenList, tokenOutSymbol) ??
-			fallbackTokenBySymbol(tokenOutSymbol);
+		try {
+			const tokenList = await getTokenListInternal();
+			const tokenIn =
+				findTokenBySymbol(tokenList, tokenInSymbol) ??
+				fallbackTokenBySymbol(tokenInSymbol);
+			const tokenOut =
+				findTokenBySymbol(tokenList, tokenOutSymbol) ??
+				fallbackTokenBySymbol(tokenOutSymbol);
 
-		if (!tokenIn || !tokenOut) {
-			throw new Error("Unsupported token symbol");
+			if (!tokenIn || !tokenOut) {
+				throw new Error("Unsupported token symbol");
+			}
+
+			const gasPriceRaw = await callBlazingTokenPrice(
+				tokenIn,
+				tokenOut,
+				tokenAmount,
+			);
+			const gasPriceTokenIn = toGasPriceTokenIn(gasPriceRaw);
+
+			const baseQuotes = await settleQuotes([
+				{
+					label: "KyberSwap",
+					promise: kyberswap(tokenIn, tokenOut, tokenAmount),
+				},
+				{ label: "1Inch", promise: inch(tokenIn, tokenOut, tokenAmount) },
+				{ label: "Matcha", promise: matcha(tokenIn, tokenOut, tokenAmount) },
+				{ label: "0x", promise: zeroEx(tokenIn, tokenOut, tokenAmount) },
+			]);
+
+			const chunkQuotes = await settleQuotes(
+				chunkSizes.map((chunk) => ({
+					label: `Blazing chunks ${chunk}`,
+					promise: callBlazingNew(
+						tokenIn,
+						tokenOut,
+						tokenAmount,
+						chunk,
+						disablePrice,
+					),
+				})),
+			);
+
+			const defaultQuote = await settleQuotes([
+				{
+					label: "Blazing Default",
+					promise: callBlazingNew(
+						tokenIn,
+						tokenOut,
+						tokenAmount,
+						null,
+						disablePrice,
+					),
+				},
+			]);
+
+			const scored = calculateScores(
+				[...baseQuotes, ...chunkQuotes, ...defaultQuote],
+				tokenAmount,
+				gasPriceTokenIn,
+			);
+
+			const ordered = [...scored];
+			if (order === "score") {
+				ordered.sort((a, b) => a.score - b.score);
+			}
+			if (order === "net") {
+				ordered.sort((a, b) => b.netOutput - a.netOutput);
+			}
+			if (order === "output") {
+				ordered.sort((a, b) => Number(b.amountOut) - Number(a.amountOut));
+			}
+
+			return {
+				tokenIn: tokenInSymbol,
+				tokenOut: tokenOutSymbol,
+				tokenAmount,
+				tokenOutDecimals: tokenOut.decimals,
+				gasPriceTokenIn: gasPriceTokenIn.toString(),
+				order,
+				results: ordered,
+				error: null,
+				status: "success",
+			};
+		} catch (error) {
+			console.error("Error in getQuoteComparison:", error);
+			return {
+				tokenIn: tokenInSymbol,
+				tokenOut: tokenOutSymbol,
+				tokenAmount,
+				tokenOutDecimals: 0,
+				gasPriceTokenIn: "0",
+				order,
+				results: [],
+				error: error instanceof Error ? error.message : String(error),
+				status: "error",
+			};
 		}
-
-		const gasPriceRaw = await callBlazingTokenPrice(
-			tokenIn,
-			tokenOut,
-			tokenAmount,
-		);
-		const gasPriceTokenIn = toGasPriceTokenIn(gasPriceRaw);
-
-		const baseQuotes = await settleQuotes([
-			{
-				label: "KyberSwap",
-				promise: kyberswap(tokenIn, tokenOut, tokenAmount),
-			},
-			{ label: "1Inch", promise: inch(tokenIn, tokenOut, tokenAmount) },
-			{ label: "Matcha", promise: matcha(tokenIn, tokenOut, tokenAmount) },
-			{ label: "0x", promise: zeroEx(tokenIn, tokenOut, tokenAmount) },
-		]);
-
-		const chunkQuotes = await settleQuotes(
-			chunkSizes.map((chunk) => ({
-				label: `Blazing chunks ${chunk}`,
-				promise: callBlazingNew(
-					tokenIn,
-					tokenOut,
-					tokenAmount,
-					chunk,
-					disablePrice,
-				),
-			})),
-		);
-
-		const defaultQuote = await settleQuotes([
-			{
-				label: "Blazing Default",
-				promise: callBlazingNew(
-					tokenIn,
-					tokenOut,
-					tokenAmount,
-					null,
-					disablePrice,
-				),
-			},
-		]);
-
-		const scored = calculateScores(
-			[...baseQuotes, ...chunkQuotes, ...defaultQuote],
-			tokenAmount,
-			gasPriceTokenIn,
-		);
-
-		const ordered = [...scored];
-		if (order === "score") {
-			ordered.sort((a, b) => a.score - b.score);
-		}
-		if (order === "net") {
-			ordered.sort((a, b) => b.netOutput - a.netOutput);
-		}
-		if (order === "output") {
-			ordered.sort((a, b) => Number(b.amountOut) - Number(a.amountOut));
-		}
-
-		return {
-			tokenIn: tokenInSymbol,
-			tokenOut: tokenOutSymbol,
-			tokenAmount,
-			tokenOutDecimals: tokenOut.decimals,
-			gasPriceTokenIn: gasPriceTokenIn.toString(),
-			order,
-			results: ordered,
-			error: null,
-			status: "success",
-		};
-	} catch (error) {
-		console.error("Error in getQuoteComparison:", error);
-		return {
-			tokenIn: tokenInSymbol,
-			tokenOut: tokenOutSymbol,
-			tokenAmount,
-			tokenOutDecimals: 0,
-			gasPriceTokenIn: "0",
-			order,
-			results: [],
-			error: error instanceof Error ? error.message : String(error),
-			status: "error",
-		};
-	}
-});
+	});

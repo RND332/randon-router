@@ -189,7 +189,10 @@ const RawResponseCell = ({
 }) => {
 	const [copied, setCopied] = useState(false);
 	const timeoutRef = useRef<number | null>(null);
-	const rawText = useMemo(() => (value ? stringifyRawResponse(value) : ""), [value]);
+	const rawText = useMemo(
+		() => (value ? stringifyRawResponse(value) : ""),
+		[value],
+	);
 
 	useEffect(() => {
 		return () => {
@@ -398,9 +401,9 @@ function App() {
 	const [isTokenAmountFocused, setIsTokenAmountFocused] = useState(false);
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
-			rawResponse: false,
-			calldataResponse: false,
-			simulationResult: false,
+		rawResponse: false,
+		calldataResponse: false,
+		simulationResult: false,
 	});
 
 	useEffect(() => {
@@ -417,20 +420,22 @@ function App() {
 	const tokenListQuery = useQuery({
 		queryKey: ["token-list"],
 		queryFn: () => getTokenList(),
-    staleTime: 60 * 60 * 1000, // 1 hour
+		staleTime: 60 * 60 * 1000, // 1 hour
 	});
 
-  const gasPriceTokenIn = useMemo(() => {
-    if (!query.data?.gasPriceTokenIn) {
-      return null;
-    }
-    try {
-      const result = new BigNumber(search.tokenAmount).multipliedBy(BigNumber(2).pow(96)).dividedBy(query.data.gasPriceTokenIn);
-      return result.toString(); 
-    } catch (e) {
-      return null;
-    }
-  }, [query.data?.gasPriceTokenIn, search]);
+	const gasPriceTokenIn = useMemo(() => {
+		if (!query.data?.gasPriceTokenIn) {
+			return null;
+		}
+		try {
+			const result = new BigNumber(search.tokenAmount)
+				.multipliedBy(BigNumber(2).pow(96))
+				.dividedBy(query.data.gasPriceTokenIn);
+			return result.toString();
+		} catch (e) {
+			return null;
+		}
+	}, [query.data?.gasPriceTokenIn, search]);
 
 	const tokens = tokenListQuery.data ?? fallbackTokenList;
 	const tokensForSelect = useMemo(() => dedupeTokensBySymbol(tokens), [tokens]);
@@ -579,9 +584,11 @@ function App() {
 						sortingFn: (rowA, rowB) => {
 							try {
 								const amountOutA = rowA.original.amountOut;
-								const simOutputA = rowA.original.simulationResult?.outputTokenAmount;
+								const simOutputA =
+									rowA.original.simulationResult?.outputTokenAmount;
 								const amountOutB = rowB.original.amountOut;
-								const simOutputB = rowB.original.simulationResult?.outputTokenAmount;
+								const simOutputB =
+									rowB.original.simulationResult?.outputTokenAmount;
 
 								const diffA =
 									amountOutA && simOutputA
@@ -712,11 +719,15 @@ function App() {
 								: null;
 
 							const diffA =
-								quoteGasA !== null && quoteGasA !== undefined && Number.isFinite(simGasA)
+								quoteGasA !== null &&
+								quoteGasA !== undefined &&
+								Number.isFinite(simGasA)
 									? String((simGasA as number) - quoteGasA)
 									: null;
 							const diffB =
-								quoteGasB !== null && quoteGasB !== undefined && Number.isFinite(simGasB)
+								quoteGasB !== null &&
+								quoteGasB !== undefined &&
+								Number.isFinite(simGasB)
 									? String((simGasB as number) - quoteGasB)
 									: null;
 
@@ -1142,7 +1153,9 @@ function App() {
 										</label>
 										<label className="flex items-center gap-2">
 											<Checkbox
-												checked={table.getColumn("calldataResponse")?.getIsVisible()}
+												checked={table
+													.getColumn("calldataResponse")
+													?.getIsVisible()}
 												onCheckedChange={(checked) =>
 													setColumnVisibility((prev) => ({
 														...prev,
@@ -1154,7 +1167,9 @@ function App() {
 										</label>
 										<label className="flex items-center gap-2">
 											<Checkbox
-												checked={table.getColumn("simulationResult")?.getIsVisible()}
+												checked={table
+													.getColumn("simulationResult")
+													?.getIsVisible()}
 												onCheckedChange={(checked) =>
 													setColumnVisibility((prev) => ({
 														...prev,
@@ -1183,7 +1198,9 @@ function App() {
 									}}
 								>
 									{search.tokenIn} to {search.tokenOut} for{" "}
-									<span className="break-all font-mono">{search.tokenAmount}</span>
+									<span className="break-all font-mono">
+										{search.tokenAmount}
+									</span>
 								</h2>
 							</div>
 							<div className="text-right text-sm text-slate-600">
@@ -1200,7 +1217,9 @@ function App() {
 								<span className="mt-0.5 inline-flex h-2 w-2 rounded-full bg-red-500" />
 								<div>
 									<p className="font-semibold">Quote request failed</p>
-									<span className="w-full text-red-700/80 text-wrap wrap-break-word">{String(query.data?.error)}</span>
+									<span className="w-full text-red-700/80 text-wrap wrap-break-word">
+										{String(query.data?.error)}
+									</span>
 								</div>
 							</div>
 						)}
