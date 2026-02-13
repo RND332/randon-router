@@ -436,7 +436,6 @@ function App() {
 		queryKey: ["quote-comparison", normalizedSearch],
 		queryFn: ({ signal }) =>
 			getQuoteComparison({ data: normalizedSearch, signal } as any),
-		placeholderData: keepPreviousData,
 		refetchOnWindowFocus: false,
 	});
 

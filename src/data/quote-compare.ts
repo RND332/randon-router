@@ -221,7 +221,6 @@ const toNumber = (value: unknown, fallback = 0) => {
 };
 
 const normalizeTokenList = (raw: unknown): Token[] => {
-	console.log("Normalizing token list data...");
 	const tokenSource = (raw as any)?.tokens ?? raw;
 	const tokens = Array.isArray(tokenSource)
 		? tokenSource
@@ -241,7 +240,6 @@ const normalizeTokenList = (raw: unknown): Token[] => {
 			decimals: toNumber(item.decimals, 18),
 			priceUsd: toNumber(item.priceUSD ?? item.priceUsd, 0),
 		}));
-	console.log(`Normalized ${readyTokens.length} tokens from raw data.`);
 	return readyTokens;
 };
 
@@ -349,6 +347,9 @@ const callBlazingNew = async (
 	} catch (error) {
 		console.warn("BlazingRouter failed simulation");
 	}
+
+	console.log(`Blazing chunks ${chunkNumber === null ? "default" : chunkNumber} ${sources} ${amountIn} ${url}`)
+
 	return {
 		aggregator:
 			chunkNumber === null
@@ -629,7 +630,6 @@ type QuoteTask = {
 
 const settleQuotes = async (tasks: QuoteTask[]) => {
 	const results = await Promise.allSettled(tasks.map((task) => task.promise));
-	console.log("Quotes settled", results);
 	return results.map((result, index) =>
 		result.status === "fulfilled"
 			? result.value
@@ -808,7 +808,6 @@ export const getQuoteComparison = createServerFn({
 })
 	.inputValidator((data: QuoteComparisonInput) => data)
 	.handler(async ({ data }): Promise<QuoteComparisonResult> => {
-		console.log("Start getQuoteComparison");
 		const tokenInSymbol = data?.tokenIn ?? "WETH";
 		const tokenOutSymbol = data?.tokenOut ?? "WBTC";
 		const tokenAmount = data?.tokenAmount ?? "1000000000000000000";
