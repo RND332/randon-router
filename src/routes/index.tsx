@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
@@ -48,6 +48,8 @@ type SearchState = {
 	disablePrice: "true" | "false";
 };
 
+const DEFAULT_TOKEN_AMOUNT = "1";
+
 export const Route = createFileRoute("/")({
 	validateSearch: (search): SearchState => {
 		const stripQuotes = (value: string) => value.replace(/^\"|\"$/g, "");
@@ -72,7 +74,7 @@ export const Route = createFileRoute("/")({
 		const tokenIn = tokenInValue.length > 0 ? tokenInValue : "WETH";
 		const tokenOut = tokenOutValue.length > 0 ? tokenOutValue : "WBTC";
 		const tokenAmount =
-			tokenAmountValue.length > 0 ? tokenAmountValue : "1000000000000000000";
+			tokenAmountValue.length > 0 ? tokenAmountValue : DEFAULT_TOKEN_AMOUNT;
 		const order =
 			orderValue === "score" || orderValue === "net" || orderValue === "output"
 				? orderValue
@@ -161,14 +163,6 @@ const formatTokenDisplay = (value: string, decimals: number, digits = 6) => {
 		return trimDecimals(formatUnits(BigInt(value), decimals), digits);
 	} catch {
 		return value;
-	}
-};
-
-const formatTokenInput = (value: string, decimals: number, digits = 6) => {
-	try {
-		return trimDecimals(formatUnits(BigInt(value), decimals), digits);
-	} catch {
-		return "";
 	}
 };
 
@@ -410,32 +404,11 @@ function App() {
 		setFormState(search);
 	}, [search]);
 
-	const query = useQuery({
-		queryKey: ["quote-comparison", search],
-		queryFn: () => getQuoteComparison({ data: search }),
-		placeholderData: keepPreviousData,
-		refetchOnWindowFocus: false,
-	});
-
 	const tokenListQuery = useQuery({
 		queryKey: ["token-list"],
 		queryFn: () => getTokenList(),
 		staleTime: 60 * 60 * 1000, // 1 hour
 	});
-
-	const gasPriceTokenIn = useMemo(() => {
-		if (!query.data?.gasPriceTokenIn) {
-			return null;
-		}
-		try {
-			const result = new BigNumber(search.tokenAmount)
-				.multipliedBy(BigNumber(2).pow(96))
-				.dividedBy(query.data.gasPriceTokenIn);
-			return result.toString();
-		} catch (e) {
-			return null;
-		}
-	}, [query.data?.gasPriceTokenIn, search]);
 
 	const tokens = tokenListQuery.data ?? fallbackTokenList;
 	const tokensForSelect = useMemo(() => dedupeTokensBySymbol(tokens), [tokens]);
@@ -447,16 +420,48 @@ function App() {
 		return map;
 	}, [tokensForSelect]);
 
-	const tokenInDecimals = tokenBySymbol.get(formState.tokenIn)?.decimals ?? 18;
+	const searchTokenInDecimals = tokenBySymbol.get(search.tokenIn)?.decimals ?? 18;
+	const normalizedSearch = useMemo(() => {
+		const parsedAmount = parseTokenInput(
+			search.tokenAmount,
+			searchTokenInDecimals,
+		);
+		return {
+			...search,
+			tokenAmount: parsedAmount ?? parseUnits("1", searchTokenInDecimals).toString(),
+		};
+	}, [search, searchTokenInDecimals]);
+
+	const query = useQuery({
+		queryKey: ["quote-comparison", normalizedSearch],
+		queryFn: ({ signal }) =>
+			getQuoteComparison({ data: normalizedSearch, signal } as any),
+		placeholderData: keepPreviousData,
+		refetchOnWindowFocus: false,
+	});
+
+	const deferredResults = useDeferredValue(query.data?.results ?? []);
+
+	const gasPriceTokenIn = useMemo(() => {
+		if (!query.data?.gasPriceTokenIn) {
+			return null;
+		}
+		try {
+			const result = new BigNumber(normalizedSearch.tokenAmount)
+				.multipliedBy(BigNumber(2).pow(96))
+				.dividedBy(query.data.gasPriceTokenIn);
+			return result.toString();
+		} catch {
+			return null;
+		}
+	}, [normalizedSearch.tokenAmount, query.data?.gasPriceTokenIn]);
 
 	useEffect(() => {
 		if (isTokenAmountFocused) {
 			return;
 		}
-		setDisplayTokenAmount(
-			formatTokenInput(formState.tokenAmount, tokenInDecimals),
-		);
-	}, [formState.tokenAmount, tokenInDecimals, isTokenAmountFocused]);
+		setDisplayTokenAmount(formState.tokenAmount);
+	}, [formState.tokenAmount, isTokenAmountFocused]);
 	const debouncedTokenInQuery = useDebouncedValue(tokenInQuery, 600);
 	const debouncedTokenOutQuery = useDebouncedValue(tokenOutQuery, 600);
 
@@ -889,7 +894,7 @@ function App() {
 	);
 
 	const table = useReactTable({
-		data: query.data?.results ?? [],
+		data: deferredResults,
 		columns,
 		state: {
 			sorting,
@@ -903,20 +908,24 @@ function App() {
 
 	const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
+		const nextSearch = {
+			...formState,
+			tokenAmount: displayTokenAmount.trim() || DEFAULT_TOKEN_AMOUNT,
+		};
 
 		const isSameSearch =
-			search.tokenIn === formState.tokenIn &&
-			search.tokenOut === formState.tokenOut &&
-			search.tokenAmount === formState.tokenAmount &&
-			search.order === formState.order &&
-			search.disablePrice === formState.disablePrice;
+			search.tokenIn === nextSearch.tokenIn &&
+			search.tokenOut === nextSearch.tokenOut &&
+			search.tokenAmount === nextSearch.tokenAmount &&
+			search.order === nextSearch.order &&
+			search.disablePrice === nextSearch.disablePrice;
 
 		if (isSameSearch) {
 			void query.refetch();
 			return;
 		}
 
-		navigate({ search: formState });
+		navigate({ search: nextSearch });
 	};
 
 	if (tokenListQuery.isLoading && !tokenListQuery.data) {
@@ -1087,13 +1096,10 @@ function App() {
 									onChange={(event) => {
 										const nextValue = event.target.value;
 										setDisplayTokenAmount(nextValue);
-										const parsed = parseTokenInput(nextValue, tokenInDecimals);
-										if (parsed) {
-											setFormState((prev) => ({
-												...prev,
-												tokenAmount: parsed,
-											}));
-										}
+										setFormState((prev) => ({
+											...prev,
+											tokenAmount: nextValue,
+										}));
 									}}
 									className="rounded-md border border-slate-200 bg-white px-3 py-2 text-base font-mono text-slate-900 outline-none focus:border-slate-400"
 								/>
@@ -1233,7 +1239,7 @@ function App() {
 									</div>
 								)}
 								<table
-									className={`min-w-full border-separate border-spacing-0 text-sm ${query.isFetching ? "animate-pulse" : ""}`}
+									className="min-w-full border-separate border-spacing-0 text-sm"
 								>
 									<thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
 										{table.getHeaderGroups().map((headerGroup) => (

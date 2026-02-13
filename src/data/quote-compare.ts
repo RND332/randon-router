@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import BigNumber from "bignumber.js";
-import { randomUUID } from "crypto";
+import { randomUUID } from "node:crypto";
+import { readFile } from "fs/promises";
 import { createRequire } from "module";
 
 declare global {
@@ -212,10 +213,7 @@ async function postScraperJson(url: string, payload: any, token: string) {
 		{ strictSSL: false },
 	);
 }
-const tokenListUrl =
-	"https://deswap.debridge.finance/v1.0/token-list?chainId=1";
-const tokenListCacheTtl = 10 * 60;
-let tokenListCache: { tokens: Token[]; exp: number } | null = null;
+const tokenListUrl = new URL("../../public/token-list.json", import.meta.url);
 
 const toNumber = (value: unknown, fallback = 0) => {
 	const numeric = Number(value);
@@ -248,50 +246,15 @@ const normalizeTokenList = (raw: unknown): Token[] => {
 };
 
 const fetchTokenList = async () => {
-	if (typeof fetch === "function") {
-		try {
-			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), 10000);
-			const response = await fetch(tokenListUrl, {
-				method: "GET",
-				headers: {
-					accept: "application/json",
-				},
-				signal: controller.signal,
-			});
-			clearTimeout(timeout);
-			if (!response.ok) {
-				throw new Error(`Token list fetch failed: ${response.status}`);
-			}
-			return response.json();
-		} catch {
-			console.log("Fetch failed, falling back to scraper...");
-		}
-	}
-
-	return fetchJson(tokenListUrl, { method: "GET" }, { strictSSL: false });
+	const content = await readFile(tokenListUrl, "utf-8");
+	return JSON.parse(content) as unknown;
 };
 
 const getTokenListInternal = async (): Promise<Token[]> => {
-	const now = Math.floor(Date.now() / 1000);
-	if (tokenListCache && tokenListCache.exp > now) {
-		return tokenListCache.tokens;
-	}
+	const response = await fetchTokenList();
+	const tokens = normalizeTokenList(response);
 
-	try {
-		const response = await fetchTokenList();
-		const tokens = normalizeTokenList(response);
-		if (tokens.length > 0) {
-			tokenListCache = { tokens, exp: now + tokenListCacheTtl };
-			return tokens;
-		}
-	} catch {
-		// Ignore and fall back to static tokens.
-	}
-
-	const fallback = fallbackTokenList;
-	tokenListCache = { tokens: fallback, exp: now + tokenListCacheTtl };
-	return fallback;
+	return tokens;
 };
 
 const findTokenBySymbol = (tokens: Token[], symbol: string) =>
@@ -768,6 +731,37 @@ const calculateScores = (
 		};
 	});
 
+	const successfulSimulations = withDistance.filter((item) => {
+		const simulation = item.simulationResult;
+		if (!simulation?.isSuccessful) {
+			return false;
+		}
+		return Number.isFinite(Number(simulation.outputTokenAmount));
+	});
+
+	if (successfulSimulations.length === 0) {
+		return withDistance.map((item) => ({
+			...item,
+			score: 0,
+		}));
+	}
+
+	const simulationOutputValues = successfulSimulations.map((item) =>
+		Number(item.simulationResult?.outputTokenAmount ?? 0),
+	);
+	const simulationGasValues = successfulSimulations.map((item) => {
+		const simulation = item.simulationResult;
+		if (!simulation) {
+			return 0;
+		}
+		return simulation.approveTxGasUsed + simulation.swapTxGasUsed;
+	});
+
+	const simulationOutputMax = Math.max(...simulationOutputValues);
+	const simulationOutputMin = Math.min(...simulationOutputValues);
+	const simulationGasMax = Math.max(...simulationGasValues);
+	const simulationGasMin = Math.min(...simulationGasValues);
+
 	return withDistance.map((item) => {
 		if (item.failed) {
 			return {
@@ -776,19 +770,37 @@ const calculateScores = (
 			};
 		}
 
-		const amountOutValue = item.amountOut === null ? 0 : Number(item.amountOut);
-		const gasUsedValue = item.gasUsed === null ? 0 : Number(item.gasUsed);
-		const amountOutNorm =
-			amountOutMax === amountOutMin
+		const simulation = item.simulationResult;
+		if (!simulation?.isSuccessful) {
+			return {
+				...item,
+				score: 0,
+			};
+		}
+
+		const outputValue = Number(simulation.outputTokenAmount ?? 0);
+		const gasValue = simulation.approveTxGasUsed + simulation.swapTxGasUsed;
+		if (!Number.isFinite(outputValue) || !Number.isFinite(gasValue)) {
+			return {
+				...item,
+				score: 0,
+			};
+		}
+
+		const outputNorm =
+			simulationOutputMax === simulationOutputMin
 				? 0
-				: (amountOutValue - amountOutMin) / (amountOutMax - amountOutMin);
-		const gasCostNorm =
-			gasUsedMax === gasUsedMin
+				: (outputValue - simulationOutputMin) /
+					(simulationOutputMax - simulationOutputMin);
+		const gasNorm =
+			simulationGasMax === simulationGasMin
 				? 0
-				: (gasUsedValue - gasUsedMin) / (gasUsedMax - gasUsedMin);
+				: (gasValue - simulationGasMin) /
+					(simulationGasMax - simulationGasMin);
 
 		const score = Math.sqrt(
-			(amountOutNorm - amountOutMax) ** 2 + (gasCostNorm - gasUsedMin) ** 2,
+			(outputNorm - simulationOutputMax) ** 2 +
+				(gasNorm - simulationGasMin) ** 2,
 		);
 
 		return {
@@ -816,91 +828,104 @@ export const getQuoteComparison = createServerFn({
 		const tokenAmount = data?.tokenAmount ?? "1000000000000000000";
 		const order = toOrder(data?.order);
 		const disablePrice = data?.disablePrice ?? "false";
+		const timeoutMs = 30_000;
 
 		try {
-			const tokenList = await getTokenListInternal();
-			const tokenIn =
-				findTokenBySymbol(tokenList, tokenInSymbol) ??
-				fallbackTokenBySymbol(tokenInSymbol);
-			const tokenOut =
-				findTokenBySymbol(tokenList, tokenOutSymbol) ??
-				fallbackTokenBySymbol(tokenOutSymbol);
+			const result = await Promise.race<QuoteComparisonResult>([
+				(async () => {
+					const tokenList = await getTokenListInternal();
+					const tokenIn =
+						findTokenBySymbol(tokenList, tokenInSymbol) ??
+						fallbackTokenBySymbol(tokenInSymbol);
+					const tokenOut =
+						findTokenBySymbol(tokenList, tokenOutSymbol) ??
+						fallbackTokenBySymbol(tokenOutSymbol);
 
-			if (!tokenIn || !tokenOut) {
-				throw new Error("Unsupported token symbol");
-			}
+					if (!tokenIn || !tokenOut) {
+						throw new Error("Unsupported token symbol");
+					}
 
-			const gasPriceRaw = await callBlazingTokenPrice(
-				tokenIn,
-				tokenOut,
-				tokenAmount,
-			);
-			const gasPriceTokenIn = toGasPriceTokenIn(gasPriceRaw);
-
-			const baseQuotes = await settleQuotes([
-				{
-					label: "KyberSwap",
-					promise: kyberswap(tokenIn, tokenOut, tokenAmount),
-				},
-				{ label: "1Inch", promise: inch(tokenIn, tokenOut, tokenAmount) },
-				{ label: "Matcha", promise: matcha(tokenIn, tokenOut, tokenAmount) },
-				{ label: "0x", promise: zeroEx(tokenIn, tokenOut, tokenAmount) },
-			]);
-
-			const chunkQuotes = await settleQuotes(
-				chunkSizes.map((chunk) => ({
-					label: `Blazing chunks ${chunk}`,
-					promise: callBlazingNew(
+					const gasPriceRaw = await callBlazingTokenPrice(
 						tokenIn,
 						tokenOut,
 						tokenAmount,
-						chunk,
-						disablePrice,
-					),
-				})),
-			);
+					);
+					const gasPriceTokenIn = toGasPriceTokenIn(gasPriceRaw);
 
-			const defaultQuote = await settleQuotes([
-				{
-					label: "Blazing Default",
-					promise: callBlazingNew(
-						tokenIn,
-						tokenOut,
+					const baseQuotes = await settleQuotes([
+						{
+							label: "KyberSwap",
+							promise: kyberswap(tokenIn, tokenOut, tokenAmount),
+						},
+						{ label: "1Inch", promise: inch(tokenIn, tokenOut, tokenAmount) },
+						{ label: "Matcha", promise: matcha(tokenIn, tokenOut, tokenAmount) },
+						{ label: "0x", promise: zeroEx(tokenIn, tokenOut, tokenAmount) },
+					]);
+
+					const chunkQuotes = await settleQuotes(
+						chunkSizes.map((chunk) => ({
+							label: `Blazing chunks ${chunk}`,
+							promise: callBlazingNew(
+								tokenIn,
+								tokenOut,
+								tokenAmount,
+								chunk,
+								disablePrice,
+							),
+						})),
+					);
+
+					const defaultQuote = await settleQuotes([
+						{
+							label: "Blazing Default",
+							promise: callBlazingNew(
+								tokenIn,
+								tokenOut,
+								tokenAmount,
+								null,
+								disablePrice,
+							),
+						},
+					]);
+
+					const scored = calculateScores(
+						[...baseQuotes, ...chunkQuotes, ...defaultQuote],
 						tokenAmount,
-						null,
-						disablePrice,
+						gasPriceTokenIn,
+					);
+
+					const ordered = [...scored];
+					if (order === "score") {
+						ordered.sort((a, b) => a.score - b.score);
+					}
+					if (order === "net") {
+						ordered.sort((a, b) => b.netOutput - a.netOutput);
+					}
+					if (order === "output") {
+						ordered.sort((a, b) => Number(b.amountOut) - Number(a.amountOut));
+					}
+
+					return {
+						tokenIn: tokenInSymbol,
+						tokenOut: tokenOutSymbol,
+						tokenAmount,
+						tokenOutDecimals: tokenOut.decimals,
+						gasPriceTokenIn: gasPriceTokenIn.toString(),
+						order,
+						results: ordered,
+						error: null,
+						status: "success",
+					};
+				})(),
+				new Promise<QuoteComparisonResult>((_, reject) =>
+					setTimeout(
+						() => reject(new Error("getQuoteComparison timed out after 10 seconds")),
+						timeoutMs,
 					),
-				},
+				),
 			]);
 
-			const scored = calculateScores(
-				[...baseQuotes, ...chunkQuotes, ...defaultQuote],
-				tokenAmount,
-				gasPriceTokenIn,
-			);
-
-			const ordered = [...scored];
-			if (order === "score") {
-				ordered.sort((a, b) => a.score - b.score);
-			}
-			if (order === "net") {
-				ordered.sort((a, b) => b.netOutput - a.netOutput);
-			}
-			if (order === "output") {
-				ordered.sort((a, b) => Number(b.amountOut) - Number(a.amountOut));
-			}
-
-			return {
-				tokenIn: tokenInSymbol,
-				tokenOut: tokenOutSymbol,
-				tokenAmount,
-				tokenOutDecimals: tokenOut.decimals,
-				gasPriceTokenIn: gasPriceTokenIn.toString(),
-				order,
-				results: ordered,
-				error: null,
-				status: "success",
-			};
+			return result;
 		} catch (error) {
 			console.error("Error in getQuoteComparison:", error);
 			return {
