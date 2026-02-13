@@ -267,15 +267,6 @@ export const getTokenList = createServerFn({
 	method: "GET",
 }).handler(async () => getTokenListInternal());
 
-const toGasPriceTokenIn = (rawValue: string): BigNumber => {
-	const numeric = Number(rawValue);
-	if (Number.isNaN(numeric)) {
-		return new BigNumber(0);
-	}
-
-	return new BigNumber(rawValue).dividedBy(new BigNumber(2).pow(96));
-};
-
 const fallbackQuote = (aggregator: string): RawQuote => ({
 	aggregator,
 	amountOut: "0",
@@ -845,7 +836,6 @@ export const getQuoteComparison = createServerFn({
 						tokenOut,
 						tokenAmount,
 					);
-					const gasPriceTokenIn = toGasPriceTokenIn(gasPriceRaw);
 
 					const baseQuotes = await settleQuotes([
 						{
@@ -886,7 +876,7 @@ export const getQuoteComparison = createServerFn({
 					const scored = calculateScores(
 						[...baseQuotes, ...chunkQuotes, ...defaultQuote],
 						tokenAmount,
-						gasPriceTokenIn,
+						BigNumber(gasPriceRaw),
 					);
 
 					const ordered = [...scored];
@@ -905,7 +895,7 @@ export const getQuoteComparison = createServerFn({
 						tokenOut: tokenOutSymbol,
 						tokenAmount,
 						tokenOutDecimals: tokenOut.decimals,
-						gasPriceTokenIn: gasPriceTokenIn.toString(),
+						gasPriceTokenIn: gasPriceRaw,
 						order,
 						results: ordered,
 						error: null,
