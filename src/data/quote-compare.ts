@@ -323,6 +323,7 @@ const callBlazingNew = async (
 ): Promise<RawQuote> => {
 	const chunkParam = chunkNumber === null ? "" : `&chunk_number=${chunkNumber}`;
 	const url = `https://dc1.invisium.com/router/ethereum/quote?asset_in=${tokenIn.address}&asset_out=${tokenOut.address}&amount_in=${amountIn}&recipient=${recipient}&simulate=true&min_buy_amount=0&disable_price=${disablePrice}${chunkParam}`;
+	console.log(url)
 	const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
 
 	const routes = Array.isArray(res.route)
@@ -335,18 +336,6 @@ const callBlazingNew = async (
 		}
 	});
 	const calldata = { to: res.settler_address, data: res.call };
-	let simulation = null;
-	try {
-		simulation = await simulate(
-			calldata,
-			tokenIn.address,
-			tokenOut.address,
-			amountIn,
-			debrigdeRouter,
-		);
-	} catch (error) {
-		console.warn("BlazingRouter failed simulation");
-	}
 
 	console.log(`Blazing chunks ${chunkNumber === null ? "default" : chunkNumber} ${sources} ${amountIn} ${url}`)
 
@@ -362,7 +351,7 @@ const callBlazingNew = async (
 		sources,
 		rawResponse: res,
 		calldataResponse: calldata,
-		simulationResult: simulation,
+		simulationResult: undefined,
 	};
 };
 
@@ -421,17 +410,6 @@ const kyberswap = async (
 		data: calldataResponse.data.data,
 	};
 
-	let simulation = null;
-	try {
-		simulation = await simulate(
-			calldata,
-			tokenIn.address,
-			tokenOut.address,
-			amountIn,
-		);
-	} catch (error) {
-		console.warn("KyberSwap failed simulation");
-	}
 
 	return {
 		aggregator: "KyberSwap",
@@ -440,7 +418,7 @@ const kyberswap = async (
 		sources,
 		rawResponse: res,
 		calldataResponse: calldata,
-		simulationResult: simulation,
+		simulationResult: undefined,
 	};
 };
 
@@ -469,17 +447,6 @@ const zeroEx = async (
 		: [];
 
 	const calldata = { to: res.transaction.to, data: res.transaction.data };
-	let simulation = null;
-	try {
-		simulation = await simulate(
-			calldata,
-			tokenIn.address,
-			tokenOut.address,
-			amountIn,
-		);
-	} catch (error) {
-		console.warn("0x failed simulation");
-	}
 
 	return {
 		aggregator: "0x",
@@ -488,7 +455,7 @@ const zeroEx = async (
 		sources,
 		rawResponse: res,
 		calldataResponse: calldata,
-		simulationResult: simulation,
+		simulationResult: undefined,
 	};
 };
 
@@ -512,17 +479,6 @@ const matcha = async (
 		: [];
 
 	const calldata = { to: res.transaction.to, data: res.transaction.data };
-	let simulation = null;
-	try {
-		simulation = await simulate(
-			calldata,
-			tokenIn.address,
-			tokenOut.address,
-			amountIn,
-		);
-	} catch (error) {
-		console.warn("Matcha failed simulation");
-	}
 
 	return {
 		aggregator: "Matcha",
@@ -531,7 +487,7 @@ const matcha = async (
 		sources,
 		rawResponse: res,
 		calldataResponse: calldata,
-		simulationResult: simulation,
+		simulationResult: undefined,
 	};
 };
 
@@ -599,17 +555,7 @@ const inch = async (
 		to: "0x111111125421cA6dc452d289314280a0f8842A65",
 		data: calldataResponse.data,
 	};
-	let simulation: SimulationResult | undefined = undefined;
-	try {
-		simulation = await simulate(
-			calldata,
-			tokenIn.address,
-			tokenOut.address,
-			amountIn,
-		);
-	} catch (error) {
-		console.warn("1Inch failed simulation");
-	}
+
 	return {
 		aggregator: "1Inch",
 		amountOut: res?.bestResult?.tokenAmount
@@ -619,7 +565,7 @@ const inch = async (
 		sources,
 		rawResponse: res,
 		calldataResponse: calldata,
-		simulationResult: simulation,
+		simulationResult: undefined,
 	};
 };
 
@@ -644,6 +590,26 @@ const settleQuotes = async (tasks: QuoteTask[]) => {
 					failed: true,
 				} satisfies RawQuote),
 	);
+};
+
+const simulateAll = async (quotes: RawQuote[], tokenIn: Token, tokenOut: Token, amountIn: string) => {
+	const results = await Promise.allSettled(quotes.map((quote) => 
+		simulate(
+			quote.calldataResponse as Calldata,
+			tokenIn.address,
+			tokenOut.address,
+			amountIn,
+		)
+	));
+	let simulated_quotes = quotes.map((quote, index) => {
+		results[index].status === "fulfilled"
+			? quote.simulationResult = results[index].value
+			: quote.simulationResult = undefined;
+		return quote
+	}
+	);
+	return simulated_quotes;
+
 };
 
 const calculateScores = (
@@ -871,9 +837,10 @@ export const getQuoteComparison = createServerFn({
 							),
 						},
 					]);
-
+					const simulated = await simulateAll([...baseQuotes, ...chunkQuotes, ...defaultQuote], tokenIn, tokenOut, tokenAmount)
+					console.log(simulated);
 					const scored = calculateScores(
-						[...baseQuotes, ...chunkQuotes, ...defaultQuote],
+						simulated,
 						tokenAmount,
 						BigNumber(gasPriceRaw),
 					);
