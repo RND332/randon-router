@@ -123,8 +123,7 @@ export const fallbackTokenList = Object.values(fallbackTokensBySymbol);
 
 const chunkSizes = [1, 5, 10, 15, 20, 30, 50, 75, 100, 125, 150, 200];
 const recipient = "0x40afefb746b5d79cecfd889d48fd1bc617deaa23";
-const sender = "0x40afefb746b5d79cecfd889d48fd1bc617deaa23";
-const debrigdeRouter = "0x663dc15d3c1ac63ff12e45ab68fea3f0a883c251";
+const sender = "0x663dc15d3c1ac63ff12e45ab68fea3f0a883c251"; //debridge router address for blazing simulations
 
 type ScraperOptions = {
 	strictSSL?: boolean;
@@ -323,7 +322,6 @@ const callBlazingNew = async (
 ): Promise<RawQuote> => {
 	const chunkParam = chunkNumber === null ? "" : `&chunk_number=${chunkNumber}`;
 	const url = `https://dc1.invisium.com/router/ethereum/quote?asset_in=${tokenIn.address}&asset_out=${tokenOut.address}&amount_in=${amountIn}&recipient=${recipient}&simulate=true&min_buy_amount=0&disable_price=${disablePrice}${chunkParam}`;
-	console.log(url)
 	const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
 
 	const routes = Array.isArray(res.route)
@@ -838,7 +836,6 @@ export const getQuoteComparison = createServerFn({
 						},
 					]);
 					const simulated = await simulateAll([...baseQuotes, ...chunkQuotes, ...defaultQuote], tokenIn, tokenOut, tokenAmount)
-					console.log(simulated);
 					const scored = calculateScores(
 						simulated,
 						tokenAmount,
