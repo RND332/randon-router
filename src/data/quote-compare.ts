@@ -800,40 +800,40 @@ export const getQuoteComparison = createServerFn({
 						tokenAmount,
 					);
 
-					const baseQuotes = await settleQuotes([
-						{
-							label: "KyberSwap",
-							promise: kyberswap(tokenIn, tokenOut, tokenAmount),
-						},
-						{ label: "1Inch", promise: inch(tokenIn, tokenOut, tokenAmount) },
-						{ label: "Matcha", promise: matcha(tokenIn, tokenOut, tokenAmount) },
-						{ label: "0x", promise: zeroEx(tokenIn, tokenOut, tokenAmount) },
-					]);
-
-					const chunkQuotes = await settleQuotes(
-						chunkSizes.map((chunk) => ({
-							label: `Blazing chunks ${chunk}`,
-							promise: callBlazingNew(
-								tokenIn,
-								tokenOut,
-								tokenAmount,
-								chunk,
-								disablePrice,
-							),
-						})),
-					);
-
-					const defaultQuote = await settleQuotes([
-						{
-							label: "Blazing Default",
-							promise: callBlazingNew(
-								tokenIn,
-								tokenOut,
-								tokenAmount,
-								null,
-								disablePrice,
-							),
-						},
+					const [baseQuotes, chunkQuotes, defaultQuote] = await Promise.all([
+						settleQuotes([
+							{
+								label: "KyberSwap",
+								promise: kyberswap(tokenIn, tokenOut, tokenAmount),
+							},
+							{ label: "1Inch", promise: inch(tokenIn, tokenOut, tokenAmount) },
+							{ label: "Matcha", promise: matcha(tokenIn, tokenOut, tokenAmount) },
+							{ label: "0x", promise: zeroEx(tokenIn, tokenOut, tokenAmount) },
+						]),
+						settleQuotes(
+							chunkSizes.map((chunk) => ({
+								label: `Blazing chunks ${chunk}`,
+								promise: callBlazingNew(
+									tokenIn,
+									tokenOut,
+									tokenAmount,
+									chunk,
+									disablePrice,
+								),
+							})),
+						),
+						settleQuotes([
+							{
+								label: "Blazing Default",
+								promise: callBlazingNew(
+									tokenIn,
+									tokenOut,
+									tokenAmount,
+									null,
+									disablePrice,
+								),
+							},
+						]),
 					]);
 					const simulated = await simulateAll([...baseQuotes, ...chunkQuotes, ...defaultQuote], tokenIn, tokenOut, tokenAmount)
 					const scored = calculateScores(
