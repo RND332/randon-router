@@ -400,6 +400,7 @@ function App() {
 	const search = Route.useSearch();
 	const navigate = Route.useNavigate();
 	const [formState, setFormState] = useState<SearchState>(search);
+	const [showAllBlazingChunks, setShowAllBlazingChunks] = useState(true);
 	const [tokenInQuery, setTokenInQuery] = useState("");
 	const [tokenOutQuery, setTokenOutQuery] = useState("");
 	const [isTokenInOpen, setIsTokenInOpen] = useState(false);
@@ -467,6 +468,39 @@ function App() {
 
 	const deferredResults = useDeferredValue(query.data?.results ?? []);
 	console.log("Quote comparison query", query.data?.results);
+
+	const displayedResults = useMemo(() => {
+		if (showAllBlazingChunks) {
+			return deferredResults;
+		}
+
+		const blazingDefault = deferredResults.find(
+			(row) => row.aggregator === "Blazing Default",
+		);
+		if (!blazingDefault?.amountOut) {
+			return deferredResults;
+		}
+
+		let defaultAmountOut: bigint;
+		try {
+			defaultAmountOut = BigInt(blazingDefault.amountOut);
+		} catch {
+			return deferredResults;
+		}
+
+		return deferredResults.filter((row) => {
+			const isBlazingChunk = row.aggregator.startsWith("Blazing chunks ");
+			if (!isBlazingChunk || !row.amountOut) {
+				return true;
+			}
+
+			try {
+				return BigInt(row.amountOut) > defaultAmountOut;
+			} catch {
+				return true;
+			}
+		});
+	}, [deferredResults, showAllBlazingChunks]);
 
 	const gasPriceTokenIn = useMemo(() => {
 		if (!query.data?.gasPriceTokenIn) {
@@ -905,7 +939,7 @@ function App() {
 	);
 
 	const table = useReactTable({
-		data: deferredResults,
+		data: displayedResults,
 		columns,
 		state: {
 			sorting,
@@ -1157,6 +1191,15 @@ function App() {
 									}
 								/>
 								<span>Disable price</span>
+							</label>
+							<label className="flex items-center gap-2">
+								<Checkbox
+									checked={showAllBlazingChunks}
+									onCheckedChange={(checked) =>
+										setShowAllBlazingChunks(checked === true)
+									}
+								/>
+								<span>Show all blazing chunks</span>
 							</label>
 						</div>
 						<div className="flex flex-wrap items-center gap-4 text-sm text-slate-600">
