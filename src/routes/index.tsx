@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
 	createColumnHelper,
 	flexRender,
@@ -17,6 +17,7 @@ import {
 	getTokenList,
 	type OrderBy,
 	type QuoteRow,
+	type SupportedChain,
 } from "../data/quote-compare";
 import {
 	Popover,
@@ -41,6 +42,7 @@ import {
 import BigNumber from "bignumber.js";
 
 type SearchState = {
+	chain: SupportedChain;
 	tokenIn: string;
 	tokenOut: string;
 	tokenAmount: string;
@@ -49,6 +51,19 @@ type SearchState = {
 };
 
 const DEFAULT_TOKEN_AMOUNT = "1";
+const CHAIN_OPTIONS: Array<{ value: SupportedChain; label: string }> = [
+	{ value: "avalanche", label: "Avalanche" },
+	{ value: "bsc", label: "BSC" },
+	{ value: "ethereum", label: "Ethereum" },
+	{ value: "arbitrum", label: "Arbitrum" },
+	{ value: "base", label: "Base" },
+	{ value: "optimism", label: "Optimism" },
+	{ value: "polygon", label: "Polygon" },
+	{ value: "hyperliquid", label: "Hyperliquid" },
+];
+
+const isSupportedChain = (value: string): value is SupportedChain =>
+	CHAIN_OPTIONS.some((chain) => chain.value === value);
 
 export const Route = createFileRoute("/")({
 	validateSearch: (search): SearchState => {
@@ -70,7 +85,9 @@ export const Route = createFileRoute("/")({
 		const tokenAmountValue = cleanValue(search.tokenAmount);
 		const orderValue = cleanValue(search.order);
 		const disablePriceValue = cleanValue(search.disablePrice);
+		const chainValue = cleanValue(search.chain);
 
+		const chain = isSupportedChain(chainValue) ? chainValue : "ethereum";
 		const tokenIn = tokenInValue.length > 0 ? tokenInValue : "WETH";
 		const tokenOut = tokenOutValue.length > 0 ? tokenOutValue : "WBTC";
 		const tokenAmount =
@@ -81,7 +98,7 @@ export const Route = createFileRoute("/")({
 				: "net";
 		const disablePrice = disablePriceValue === "true" ? "true" : "false";
 
-		return { tokenIn, tokenOut, tokenAmount, order, disablePrice };
+		return { chain, tokenIn, tokenOut, tokenAmount, order, disablePrice };
 	},
 	component: App,
 });
@@ -420,7 +437,8 @@ function App() {
 		return map;
 	}, [tokensForSelect]);
 
-	const searchTokenInDecimals = tokenBySymbol.get(search.tokenIn)?.decimals ?? 18;
+	const searchTokenInDecimals =
+		tokenBySymbol.get(search.tokenIn)?.decimals ?? 18;
 	const normalizedSearch = useMemo(() => {
 		const parsedAmount = parseTokenInput(
 			search.tokenAmount,
@@ -428,7 +446,8 @@ function App() {
 		);
 		return {
 			...search,
-			tokenAmount: parsedAmount ?? parseUnits("1", searchTokenInDecimals).toString(),
+			tokenAmount:
+				parsedAmount ?? parseUnits("1", searchTokenInDecimals).toString(),
 		};
 	}, [search, searchTokenInDecimals]);
 
@@ -438,6 +457,8 @@ function App() {
 			getQuoteComparison({ data: normalizedSearch, signal } as any),
 		refetchOnWindowFocus: false,
 	});
+
+	console.log("Query data:", query.data);
 
 	const deferredResults = useDeferredValue(query.data?.results ?? []);
 
@@ -514,7 +535,7 @@ function App() {
 							),
 						cell: (info) => {
 							const value = info.getValue();
-							if (value === null || info.row.original.failed) {
+							if (value === null) {
 								return <span className="text-slate-400">—</span>;
 							}
 
@@ -653,7 +674,7 @@ function App() {
 						header: "Gas",
 						cell: (info) => {
 							const value = info.getValue();
-							if (value === null || info.row.original.failed) {
+							if (value === null) {
 								return <span className="text-slate-400">—</span>;
 							}
 							return (
@@ -782,7 +803,7 @@ function App() {
 					(rowB.original.sources?.length ?? 0),
 				cell: (info) => {
 					const value = info.getValue();
-					if (!value || value.length === 0 || info.row.original.failed) {
+					if (!value || value.length === 0) {
 						return <span className="text-slate-400">—</span>;
 					}
 					return (
@@ -913,6 +934,7 @@ function App() {
 		};
 
 		const isSameSearch =
+			search.chain === nextSearch.chain &&
 			search.tokenIn === nextSearch.tokenIn &&
 			search.tokenOut === nextSearch.tokenOut &&
 			search.tokenAmount === nextSearch.tokenAmount &&
@@ -949,7 +971,33 @@ function App() {
 						onSubmit={handleSubmit}
 						className="grid gap-4 rounded-md border border-slate-200 bg-white p-6"
 					>
-						<div className="grid gap-4 md:grid-cols-5">
+						<div className="grid gap-4 md:grid-cols-6">
+							<label className="flex flex-col gap-2 text-sm text-slate-600">
+								Chain
+								<Select
+									value={formState.chain}
+									onValueChange={(value) => {
+										if (!isSupportedChain(value)) {
+											return;
+										}
+										setFormState((prev) => ({
+											...prev,
+											chain: value,
+										}));
+									}}
+								>
+									<SelectTrigger className="w-full">
+										<SelectValue placeholder="Select chain" />
+									</SelectTrigger>
+									<SelectContent>
+										{CHAIN_OPTIONS.map((chain) => (
+											<SelectItem key={chain.value} value={chain.value}>
+												{chain.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</label>
 							<label className="flex flex-col gap-2 text-sm text-slate-600">
 								Token In
 								<Select
@@ -1237,9 +1285,7 @@ function App() {
 										Loading quotes...
 									</div>
 								)}
-								<table
-									className="min-w-full border-separate border-spacing-0 text-sm"
-								>
+								<table className="min-w-full border-separate border-spacing-0 text-sm">
 									<thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
 										{table.getHeaderGroups().map((headerGroup) => (
 											<tr key={headerGroup.id}>

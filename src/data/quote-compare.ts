@@ -10,6 +10,16 @@ declare global {
 
 export type OrderBy = "score" | "net" | "output";
 
+export type SupportedChain =
+	| "avalanche"
+	| "bsc"
+	| "ethereum"
+	| "arbitrum"
+	| "base"
+	| "optimism"
+	| "polygon"
+	| "hyperliquid";
+
 type Calldata = {
 	to: string;
 	data: string;
@@ -55,6 +65,7 @@ export type QuoteRow = RawQuote & {
 };
 
 export type QuoteComparisonInput = {
+	chain?: SupportedChain;
 	tokenIn: string;
 	tokenOut: string;
 	tokenAmount: string;
@@ -63,6 +74,7 @@ export type QuoteComparisonInput = {
 };
 
 export type QuoteComparisonResult = {
+	chain: SupportedChain;
 	tokenIn: string;
 	tokenOut: string;
 	tokenAmount: string;
@@ -125,6 +137,68 @@ const chunkSizes = [1, 5, 10, 15, 20, 30, 50, 75, 100, 125, 150, 200];
 const recipient = "0x40afefb746b5d79cecfd889d48fd1bc617deaa23";
 const sender = "0x663dc15d3c1ac63ff12e45ab68fea3f0a883c251"; //debridge router address for blazing simulations
 
+const DEFAULT_CHAIN: SupportedChain = "ethereum";
+
+type ChainConfig = {
+	routerPath: string;
+	kyberPath?: string;
+	zeroExChainId?: number;
+	matchaChainId?: number;
+	inchChainId?: number;
+};
+
+const CHAIN_CONFIG: Record<SupportedChain, ChainConfig> = {
+	avalanche: {
+		routerPath: "avalanche",
+		kyberPath: "avalanche",
+		zeroExChainId: 43114,
+		inchChainId: 43114,
+	},
+	bsc: {
+		routerPath: "bsc",
+		kyberPath: "bsc",
+		zeroExChainId: 56,
+		inchChainId: 56,
+	},
+	ethereum: {
+		routerPath: "ethereum",
+		kyberPath: "ethereum",
+		zeroExChainId: 1,
+		matchaChainId: 1,
+		inchChainId: 1,
+	},
+	arbitrum: {
+		routerPath: "arbitrum",
+		kyberPath: "arbitrum",
+		zeroExChainId: 42161,
+		inchChainId: 42161,
+	},
+	base: {
+		routerPath: "base",
+		kyberPath: "base",
+		zeroExChainId: 8453,
+		inchChainId: 8453,
+	},
+	optimism: {
+		routerPath: "optimism",
+		kyberPath: "optimism",
+		zeroExChainId: 10,
+		inchChainId: 10,
+	},
+	polygon: {
+		routerPath: "polygon",
+		kyberPath: "polygon",
+		zeroExChainId: 137,
+		inchChainId: 137,
+	},
+	hyperliquid: {
+		routerPath: "hyperliquid",
+	},
+};
+
+const getChainConfig = (chain?: SupportedChain) =>
+	CHAIN_CONFIG[chain ?? DEFAULT_CHAIN] ?? CHAIN_CONFIG[DEFAULT_CHAIN];
+
 type ScraperOptions = {
 	strictSSL?: boolean;
 };
@@ -174,10 +248,12 @@ const simulate = async (
 	tokenIn: string,
 	outputToken: string,
 	tokenInAmount: string,
+	chain: SupportedChain,
 	senderAddress: string = sender,
 ) => {
+	const { routerPath } = getChainConfig(chain);
 	return fetchJson(
-		"https://dev.invisium.com/simulation/ethereum/sim-dln-output-amount",
+		`https://dev.invisium.com/simulation/${routerPath}/sim-dln-output-amount`,
 		{
 			method: "POST",
 			body: {
@@ -307,8 +383,10 @@ const callBlazingTokenPrice = async (
 	tokenIn: Token,
 	tokenOut: Token,
 	amountIn: string,
+	chain: SupportedChain,
 ) => {
-	const url = `https://dc1.invisium.com/router/ethereum/quote?asset_in=${tokenIn.address}&asset_out=${tokenOut.address}&amount_in=${amountIn}&recipient=${recipient}&min_buy_amount=0`;
+	const { routerPath } = getChainConfig(chain);
+	const url = `https://dc1.invisium.com/router/${routerPath}/quote?asset_in=${tokenIn.address}&asset_out=${tokenOut.address}&amount_in=${amountIn}&recipient=${recipient}&min_buy_amount=0`;
 	const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
 	return res.gas_price_token_in as string;
 };
@@ -317,11 +395,13 @@ const callBlazingNew = async (
 	tokenIn: Token,
 	tokenOut: Token,
 	amountIn: string,
+	chain: SupportedChain,
 	chunkNumber: number | null,
 	disablePrice: "true" | "false",
 ): Promise<RawQuote> => {
+	const { routerPath } = getChainConfig(chain);
 	const chunkParam = chunkNumber === null ? "" : `&chunk_number=${chunkNumber}`;
-	const url = `https://dc1.invisium.com/router/ethereum/quote?asset_in=${tokenIn.address}&asset_out=${tokenOut.address}&amount_in=${amountIn}&recipient=${recipient}&simulate=true&min_buy_amount=0&disable_price=${disablePrice}${chunkParam}`;
+	const url = `https://dc1.invisium.com/router/${routerPath}/quote?asset_in=${tokenIn.address}&asset_out=${tokenOut.address}&amount_in=${amountIn}&recipient=${recipient}&simulate=true&min_buy_amount=0&disable_price=${disablePrice}${chunkParam}`;
 	const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
 
 	const routes = Array.isArray(res.route)
@@ -334,8 +414,6 @@ const callBlazingNew = async (
 		}
 	});
 	const calldata = { to: res.settler_address, data: res.call };
-
-	console.log(`Blazing chunks ${chunkNumber === null ? "default" : chunkNumber} ${sources} ${amountIn} ${url}`)
 
 	return {
 		aggregator:
@@ -357,8 +435,14 @@ const kyberswap = async (
 	tokenIn: Token,
 	tokenOut: Token,
 	amountIn: string,
+	chain: SupportedChain,
 ): Promise<RawQuote> => {
-	const url = `https://aggregator-api.kyberswap.com/ethereum/api/v1/routes?tokenIn=${tokenIn.address}&tokenOut=${tokenOut.address}&amountIn=${amountIn}&gasInclude=true`;
+	const { kyberPath } = getChainConfig(chain);
+	if (!kyberPath) {
+		return fallbackQuote("KyberSwap");
+	}
+
+	const url = `https://aggregator-api.kyberswap.com/${kyberPath}/api/v1/routes?tokenIn=${tokenIn.address}&tokenOut=${tokenOut.address}&amountIn=${amountIn}&gasInclude=true`;
 	const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
 
 	const summary = res?.data?.routeSummary;
@@ -385,7 +469,7 @@ const kyberswap = async (
 		let deadline = Math.floor(Date.now() / 1000 + 10 * 60);
 		try {
 			calldataResponse = await postScraperJson(
-				"https://aggregator-api.kyberswap.com/ethereum/api/v1/route/build",
+				`https://aggregator-api.kyberswap.com/${kyberPath}/api/v1/route/build`,
 				{
 					routeSummary: res.data.routeSummary,
 					deadline: deadline,
@@ -408,7 +492,6 @@ const kyberswap = async (
 		data: calldataResponse.data.data,
 	};
 
-
 	return {
 		aggregator: "KyberSwap",
 		amountOut: summary.amountOut ? String(summary.amountOut) : "0",
@@ -424,13 +507,19 @@ const zeroEx = async (
 	tokenIn: Token,
 	tokenOut: Token,
 	amountIn: string,
+	chain: SupportedChain,
 ): Promise<RawQuote> => {
 	const apiKey = process.env.ZEROX_API_KEY;
 	if (!apiKey) {
 		return fallbackQuote("0x");
 	}
 
-	const url = `https://api.0x.org/swap/allowance-holder/quote?chainId=1&sellToken=${tokenIn.address}&buyToken=${tokenOut.address}&sellAmount=${amountIn}&taker=${recipient}`;
+	const { zeroExChainId } = getChainConfig(chain);
+	if (!zeroExChainId) {
+		return fallbackQuote("0x");
+	}
+
+	const url = `https://api.0x.org/swap/allowance-holder/quote?chainId=${zeroExChainId}&sellToken=${tokenIn.address}&buyToken=${tokenOut.address}&sellAmount=${amountIn}&taker=${recipient}`;
 	const res = await fetchJson(url, {
 		method: "GET",
 		headers: {
@@ -461,9 +550,15 @@ const matcha = async (
 	tokenIn: Token,
 	tokenOut: Token,
 	amountIn: string,
+	chain: SupportedChain,
 ): Promise<RawQuote> => {
+	const { matchaChainId } = getChainConfig(chain);
+	if (!matchaChainId) {
+		return fallbackQuote("Matcha");
+	}
+
 	const jwt = await getMatchaToken();
-	const url = `https://matcha.xyz/api/swap/quote?chainId=1&buyToken=${tokenOut.address}&sellToken=${tokenIn.address}&sellAmount=${amountIn}&useIntents=false&taker=${recipient}&slippageBps=50`;
+	const url = `https://matcha.xyz/api/swap/quote?chainId=${matchaChainId}&buyToken=${tokenOut.address}&sellToken=${tokenIn.address}&sellAmount=${amountIn}&useIntents=false&taker=${recipient}&slippageBps=50`;
 	const res = await fetchJson(url, {
 		method: "GET",
 		headers: {
@@ -493,8 +588,14 @@ const inch = async (
 	tokenIn: Token,
 	tokenOut: Token,
 	amountIn: string,
+	chain: SupportedChain,
 ): Promise<RawQuote> => {
-	const url = `https://proxy-app.1inch.io/v2.0/v2.2/chain/1/router/v6/quotesv2?fromTokenAddress=${tokenIn.address}&toTokenAddress=${tokenOut.address}&amount=${amountIn}&gasPrice=148636342&preset=maxReturnResult&walletAddress=${sender}&excludedProtocols=PMM1,PMM2,PMM3,PMM4,PMM5,PMM6,PMM7,PMM8,PMM9,PMM10,PMM11,PMM12,PMM13,PMM14,PMM15,PMM16`;
+	const { inchChainId } = getChainConfig(chain);
+	if (!inchChainId) {
+		return fallbackQuote("1Inch");
+	}
+
+	const url = `https://proxy-app.1inch.io/v2.0/v2.2/chain/${inchChainId}/router/v6/quotesv2?fromTokenAddress=${tokenIn.address}&toTokenAddress=${tokenOut.address}&amount=${amountIn}&gasPrice=148636342&preset=maxReturnResult&walletAddress=${sender}&excludedProtocols=PMM1,PMM2,PMM3,PMM4,PMM5,PMM6,PMM7,PMM8,PMM9,PMM10,PMM11,PMM12,PMM13,PMM14,PMM15,PMM16`;
 	const token = await getInchToken();
 	const res = await fetchJson(url, {
 		method: "GET",
@@ -543,7 +644,7 @@ const inch = async (
 				toTokenAddress: tokenOut.address,
 				walletAddress: sender,
 			};
-			const buildUrl = `https://proxy-app.1inch.io/v2.0/bff/v1.0/v6.0/1/build?version=2`;
+			const buildUrl = `https://proxy-app.1inch.io/v2.0/bff/v1.0/v6.0/${inchChainId}/build?version=2`;
 			calldataResponse = await postScraperJson(buildUrl, data, token);
 		} catch (error) {
 			console.warn("1Inch calldata build failed", error);
@@ -574,6 +675,12 @@ type QuoteTask = {
 
 const settleQuotes = async (tasks: QuoteTask[]) => {
 	const results = await Promise.allSettled(tasks.map((task) => task.promise));
+	// console log any errors
+	// results.forEach((result, index) => {
+	// 	if (result.status === "rejected") {
+	// 		console.warn(`Quote task ${tasks[index].label} failed:`, result.reason);
+	// 	}
+	// });
 	return results.map((result, index) =>
 		result.status === "fulfilled"
 			? result.value
@@ -590,24 +697,32 @@ const settleQuotes = async (tasks: QuoteTask[]) => {
 	);
 };
 
-const simulateAll = async (quotes: RawQuote[], tokenIn: Token, tokenOut: Token, amountIn: string) => {
-	const results = await Promise.allSettled(quotes.map((quote) => 
-		simulate(
-			quote.calldataResponse as Calldata,
-			tokenIn.address,
-			tokenOut.address,
-			amountIn,
-		)
-	));
-	let simulated_quotes = quotes.map((quote, index) => {
-		results[index].status === "fulfilled"
-			? quote.simulationResult = results[index].value
-			: quote.simulationResult = undefined;
-		return quote
-	}
+const simulateAll = async (
+	quotes: RawQuote[],
+	tokenIn: Token,
+	tokenOut: Token,
+	amountIn: string,
+	chain: SupportedChain,
+) => {
+	const results = await Promise.allSettled(
+		quotes.map((quote) =>
+			simulate(
+				quote.calldataResponse as Calldata,
+				tokenIn.address,
+				tokenOut.address,
+				amountIn,
+				chain,
+			),
+		),
 	);
-	return simulated_quotes;
+	const simulated_quotes = quotes.map((quote, index) => {
+		results[index].status === "fulfilled"
+			? (quote.simulationResult = results[index].value)
+			: (quote.simulationResult = undefined);
+		return quote;
+	});
 
+	return simulated_quotes;
 };
 
 const calculateScores = (
@@ -615,15 +730,162 @@ const calculateScores = (
 	amountIn: string,
 	gasPriceTokenIn: BigNumber,
 ): QuoteRow[] => {
-	if (raw.length === 0) {
-		return [];
-	}
+	try {
+		if (raw.length === 0) {
+			return [];
+		}
 
-	const successful = raw.filter(
-		(item) => item.simulationResult?.outputTokenAmount !== undefined && !BigNumber(item.simulationResult?.swapTxGasUsed).plus(item.simulationResult?.approveTxGasUsed ?? 0).isZero(),
-	);
+		const successful = raw.filter(
+			(item) =>
+				item.simulationResult?.outputTokenAmount !== undefined &&
+				!BigNumber(item.simulationResult?.swapTxGasUsed)
+					.plus(item.simulationResult?.approveTxGasUsed ?? 0)
+					.isZero(),
+		);
 
-	if (successful.length === 0) {
+		if (successful.length === 0) {
+			console.warn("All quotes failed or returned zero output/gas");
+			return raw.map((item) => ({
+				...item,
+				netOutput: 0,
+				distance: 0,
+				score: Number.POSITIVE_INFINITY,
+				failed: true,
+			}));
+		}
+
+		const tokenAmountNumber = Number(amountIn);
+
+		const withNet = raw.map((item) => {
+			const isFailed = item.amountOut === null || item.gasUsed === null;
+			const amountOut =
+				item.amountOut === null
+					? new BigNumber(0)
+					: new BigNumber(item.amountOut);
+			const gasUsed =
+				item.gasUsed === null ? new BigNumber(0) : new BigNumber(item.gasUsed);
+			const gasCost = gasUsed.multipliedBy(gasPriceTokenIn);
+			const netOutput = tokenAmountNumber
+				? amountOut.minus(
+						gasCost.multipliedBy(amountOut).dividedBy(tokenAmountNumber),
+					)
+				: amountOut;
+
+			return {
+				...item,
+				netOutput: Number(netOutput.toFixed(18)),
+				distance: 0,
+				score: 0,
+				failed: item.failed ?? isFailed,
+			};
+		});
+
+		const netOutputMax = Math.max(...withNet.map((item) => item.netOutput));
+
+		const withDistance = withNet.map((item) => {
+			if (item.failed) {
+				return {
+					...item,
+					distance: 0,
+				};
+			}
+
+			const distance =
+				netOutputMax > 0
+					? ((netOutputMax - item.netOutput) / netOutputMax) * 100
+					: 0;
+
+			return {
+				...item,
+				distance: Number.isFinite(distance) ? Number(distance.toFixed(8)) : 0,
+			};
+		});
+
+		const successfulSimulations = withDistance.filter((item) => {
+			const simulation = item.simulationResult;
+			return (
+				!!simulation?.isSuccessful &&
+				Number.isFinite(Number(simulation.outputTokenAmount))
+			);
+		});
+
+		if (successfulSimulations.length === 0) {
+			return withDistance.map((item) => ({
+				...item,
+				score: Number.POSITIVE_INFINITY,
+			}));
+		}
+
+		const simulationOutputValues = successfulSimulations.map((item) =>
+			Number(item.simulationResult?.outputTokenAmount ?? 0),
+		);
+		const simulationGasValues = successfulSimulations.map((item) => {
+			const simulation = item.simulationResult!;
+			return simulation.approveTxGasUsed + simulation.swapTxGasUsed;
+		});
+
+		const simulationOutputMax = Math.max(...simulationOutputValues);
+		const simulationOutputMin = Math.min(...simulationOutputValues);
+		const simulationGasMax = Math.max(...simulationGasValues);
+		const simulationGasMin = Math.min(...simulationGasValues);
+
+		const sqrtTwo = new BigNumber(2).sqrt();
+
+		return withDistance.map((item) => {
+			const simulation = item.simulationResult;
+			if (!simulation?.isSuccessful) {
+				return {
+					...item,
+					score: Number.POSITIVE_INFINITY,
+				};
+			}
+
+			const outputValue = new BigNumber(simulation.outputTokenAmount ?? 0);
+			const gasValue = new BigNumber(simulation.approveTxGasUsed).plus(
+				simulation.swapTxGasUsed,
+			);
+
+			if (!outputValue.isFinite() || !gasValue.isFinite()) {
+				return {
+					...item,
+					score: Number.POSITIVE_INFINITY,
+				};
+			}
+
+			const outputNorm =
+				simulationOutputMax === simulationOutputMin
+					? new BigNumber(1)
+					: outputValue
+							.minus(simulationOutputMin)
+							.dividedBy(simulationOutputMax - simulationOutputMin);
+
+			const gasNorm =
+				simulationGasMax === simulationGasMin
+					? new BigNumber(0)
+					: gasValue
+							.minus(simulationGasMin)
+							.dividedBy(simulationGasMax - simulationGasMin);
+
+			const outputDelta = outputNorm.minus(1);
+			const gasDelta = gasNorm.minus(0);
+
+			const euclidean = outputDelta.pow(2).plus(gasDelta.pow(2)).sqrt();
+			const normalized = euclidean.dividedBy(sqrtTwo); // 0..1
+			const bounded = BigNumber.maximum(0, BigNumber.minimum(1, normalized));
+
+			console.log(
+				`Quote ${item.aggregator}: outputNorm=${outputNorm.toString()}, gasNorm=${gasNorm.toString()}, outputDelta=${outputDelta.toString()}, gasDelta=${gasDelta.toString()}, euclidean=${euclidean.toString()}, normalized=${normalized.toString()}, bounded=${bounded.toString()}`,
+			);
+
+			return {
+				...item,
+				score: bounded.isFinite()
+					? Number(bounded.decimalPlaces(6, BigNumber.ROUND_HALF_UP).toString())
+					: Number.POSITIVE_INFINITY,
+			};
+		});
+	} catch (error) {
+		console.error("Error in calculateScores:", error);
 		return raw.map((item) => ({
 			...item,
 			netOutput: 0,
@@ -632,132 +894,6 @@ const calculateScores = (
 			failed: true,
 		}));
 	}
-
-	const tokenAmountNumber = Number(amountIn);
-
-	const withNet = raw.map((item) => {
-		const isFailed = item.amountOut === null || item.gasUsed === null;
-		const amountOut =
-			item.amountOut === null ? new BigNumber(0) : new BigNumber(item.amountOut);
-		const gasUsed =
-			item.gasUsed === null ? new BigNumber(0) : new BigNumber(item.gasUsed);
-		const gasCost = gasUsed.multipliedBy(gasPriceTokenIn);
-		const netOutput = tokenAmountNumber
-			? amountOut.minus(
-					gasCost.multipliedBy(amountOut).dividedBy(tokenAmountNumber),
-				)
-			: amountOut;
-
-		return {
-			...item,
-			netOutput: Number(netOutput.toFixed(18)),
-			distance: 0,
-			score: 0,
-			failed: item.failed ?? isFailed,
-		};
-	});
-
-	const netOutputMax = Math.max(...withNet.map((item) => item.netOutput));
-
-	const withDistance = withNet.map((item) => {
-		if (item.failed) {
-			return {
-				...item,
-				distance: 0,
-			};
-		}
-
-		const distance =
-			netOutputMax > 0
-				? ((netOutputMax - item.netOutput) / netOutputMax) * 100
-				: 0;
-
-		return {
-			...item,
-			distance: Number.isFinite(distance) ? Number(distance.toFixed(8)) : 0,
-		};
-	});
-
-	const successfulSimulations = withDistance.filter((item) => {
-		const simulation = item.simulationResult;
-		return (
-			!!simulation?.isSuccessful &&
-			Number.isFinite(Number(simulation.outputTokenAmount))
-		);
-	});
-
-	if (successfulSimulations.length === 0) {
-		return withDistance.map((item) => ({
-			...item,
-			score: Number.POSITIVE_INFINITY,
-		}));
-	}
-
-	const simulationOutputValues = successfulSimulations.map((item) =>
-		Number(item.simulationResult?.outputTokenAmount ?? 0),
-	);
-	const simulationGasValues = successfulSimulations.map((item) => {
-		const simulation = item.simulationResult!;
-		return simulation.approveTxGasUsed + simulation.swapTxGasUsed;
-	});
-
-	const simulationOutputMax = Math.max(...simulationOutputValues);
-	const simulationOutputMin = Math.min(...simulationOutputValues);
-	const simulationGasMax = Math.max(...simulationGasValues);
-	const simulationGasMin = Math.min(...simulationGasValues);
-
-	const sqrtTwo = new BigNumber(2).sqrt();
-
-	return withDistance.map((item) => {
-		const simulation = item.simulationResult;
-		if (!simulation?.isSuccessful) {
-			return {
-				...item,
-				score: Number.POSITIVE_INFINITY,
-			};
-		}
-
-		const outputValue = new BigNumber(simulation.outputTokenAmount ?? 0);
-		const gasValue = new BigNumber(simulation.approveTxGasUsed).plus(
-			simulation.swapTxGasUsed,
-		);
-
-		if (!outputValue.isFinite() || !gasValue.isFinite()) {
-			return {
-				...item,
-				score: Number.POSITIVE_INFINITY,
-			};
-		}
-
-		const outputNorm =
-			simulationOutputMax === simulationOutputMin
-				? new BigNumber(1)
-				: outputValue
-						.minus(simulationOutputMin)
-						.dividedBy(simulationOutputMax - simulationOutputMin);
-
-		const gasNorm =
-			simulationGasMax === simulationGasMin
-				? new BigNumber(0)
-				: gasValue.minus(simulationGasMin).dividedBy(simulationGasMax - simulationGasMin);
-
-		const outputDelta = outputNorm.minus(1);
-		const gasDelta = gasNorm.minus(0);
-
-		const euclidean = outputDelta.pow(2).plus(gasDelta.pow(2)).sqrt();
-		const normalized = euclidean.dividedBy(sqrtTwo); // 0..1
-		const bounded = BigNumber.maximum(
-			0,
-			BigNumber.minimum(1, normalized),
-		);
-
-		return {
-			...item,
-			score: bounded.isFinite()
-				? Number(bounded.decimalPlaces(6, BigNumber.ROUND_HALF_UP).toString())
-				: Number.POSITIVE_INFINITY,
-		};
-	});
 };
 
 const toOrder = (value: QuoteComparisonInput["order"]): OrderBy => {
@@ -772,6 +908,7 @@ export const getQuoteComparison = createServerFn({
 })
 	.inputValidator((data: QuoteComparisonInput) => data)
 	.handler(async ({ data }): Promise<QuoteComparisonResult> => {
+		const chain = data?.chain ?? DEFAULT_CHAIN;
 		const tokenInSymbol = data?.tokenIn ?? "WETH";
 		const tokenOutSymbol = data?.tokenOut ?? "WBTC";
 		const tokenAmount = data?.tokenAmount ?? "1000000000000000000";
@@ -798,17 +935,27 @@ export const getQuoteComparison = createServerFn({
 						tokenIn,
 						tokenOut,
 						tokenAmount,
+						chain,
 					);
 
 					const [baseQuotes, chunkQuotes, defaultQuote] = await Promise.all([
 						settleQuotes([
 							{
 								label: "KyberSwap",
-								promise: kyberswap(tokenIn, tokenOut, tokenAmount),
+								promise: kyberswap(tokenIn, tokenOut, tokenAmount, chain),
 							},
-							{ label: "1Inch", promise: inch(tokenIn, tokenOut, tokenAmount) },
-							{ label: "Matcha", promise: matcha(tokenIn, tokenOut, tokenAmount) },
-							{ label: "0x", promise: zeroEx(tokenIn, tokenOut, tokenAmount) },
+							{
+								label: "1Inch",
+								promise: inch(tokenIn, tokenOut, tokenAmount, chain),
+							},
+							{
+								label: "Matcha",
+								promise: matcha(tokenIn, tokenOut, tokenAmount, chain),
+							},
+							{
+								label: "0x",
+								promise: zeroEx(tokenIn, tokenOut, tokenAmount, chain),
+							},
 						]),
 						settleQuotes(
 							chunkSizes.map((chunk) => ({
@@ -817,6 +964,7 @@ export const getQuoteComparison = createServerFn({
 									tokenIn,
 									tokenOut,
 									tokenAmount,
+									chain,
 									chunk,
 									disablePrice,
 								),
@@ -829,13 +977,20 @@ export const getQuoteComparison = createServerFn({
 									tokenIn,
 									tokenOut,
 									tokenAmount,
+									chain,
 									null,
 									disablePrice,
 								),
 							},
 						]),
 					]);
-					const simulated = await simulateAll([...baseQuotes, ...chunkQuotes, ...defaultQuote], tokenIn, tokenOut, tokenAmount)
+					const simulated = await simulateAll(
+						[...baseQuotes, ...chunkQuotes, ...defaultQuote],
+						tokenIn,
+						tokenOut,
+						tokenAmount,
+						chain,
+					);
 					const scored = calculateScores(
 						simulated,
 						tokenAmount,
@@ -854,6 +1009,7 @@ export const getQuoteComparison = createServerFn({
 					}
 
 					return {
+						chain,
 						tokenIn: tokenInSymbol,
 						tokenOut: tokenOutSymbol,
 						tokenAmount,
@@ -867,7 +1023,10 @@ export const getQuoteComparison = createServerFn({
 				})(),
 				new Promise<QuoteComparisonResult>((_, reject) =>
 					setTimeout(
-						() => reject(new Error("getQuoteComparison timed out after 100 seconds")),
+						() =>
+							reject(
+								new Error("getQuoteComparison timed out after 100 seconds"),
+							),
 						timeoutMs,
 					),
 				),
@@ -877,6 +1036,7 @@ export const getQuoteComparison = createServerFn({
 		} catch (error) {
 			console.error("Error in getQuoteComparison:", error);
 			return {
+				chain,
 				tokenIn: tokenInSymbol,
 				tokenOut: tokenOutSymbol,
 				tokenAmount,
