@@ -254,9 +254,6 @@ const simulate = async (
 ) => {
 	const { routerPath } = getChainConfig(chain);
 	try {
-		if (!calldata || !calldata.to || !calldata.data) {
-			throw new Error("Invalid calldata for simulation");
-		}
 		return await fetch(
 			`https://dc1.invisium.com/simulation/${routerPath}/sim-dln-output-amount`,
 			{
@@ -273,7 +270,7 @@ const simulate = async (
 					},
 				} as any,
 				headers: {
-					"content-type": "application/json",
+					"Content-Type": "application/json",
 				},
 			},
 		).then((res) => {
