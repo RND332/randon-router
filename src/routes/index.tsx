@@ -18,6 +18,7 @@ import {
 	type OrderBy,
 	type QuoteRow,
 	type SupportedChain,
+	type Token,
 } from "../data/quote-compare";
 import {
 	Popover,
@@ -416,13 +417,24 @@ function App() {
 	}, [search]);
 
 	const tokenListQuery = useQuery({
-		queryKey: ["token-list"],
-		queryFn: () => getTokenList(),
+		queryKey: ["token-list", formState.chain],
+		queryFn: () => getTokenList({ data: { chain: formState.chain } }),
 		staleTime: 60 * 60 * 1000, // 1 hour
 	});
 
-	const tokens = tokenListQuery.data ?? fallbackTokenList;
-	const tokensForSelect = useMemo(() => dedupeTokensBySymbol(tokens), [tokens]);
+	console.log(
+		"Token list query",
+		formState.chain,
+		Object.keys(tokenListQuery.data?.tokens ?? {}).length,
+	);
+
+	const tokensForSelect = useMemo(() => {
+		const tokenList = tokenListQuery.data;
+		if (tokenList) {
+			return dedupeTokensBySymbol<Token>(Object.values(tokenList.tokens));
+		}
+		return dedupeTokensBySymbol<Token>(fallbackTokenList);
+	}, [tokenListQuery.data]);
 	const tokenBySymbol = useMemo(() => {
 		const map = new Map<string, (typeof tokensForSelect)[number]>();
 		tokensForSelect.forEach((token) => {
@@ -451,8 +463,6 @@ function App() {
 			getQuoteComparison({ data: normalizedSearch, signal } as any),
 		refetchOnWindowFocus: false,
 	});
-
-	console.log("Query data:", query.data, query.error);
 
 	const deferredResults = useDeferredValue(query.data?.results ?? []);
 
@@ -962,7 +972,11 @@ function App() {
 										setFormState((prev) => ({
 											...prev,
 											chain: value,
+											tokenIn: "",
+											tokenOut: "",
 										}));
+										setTokenInQuery("");
+										setTokenOutQuery("");
 									}}
 								>
 									<SelectTrigger className="w-full">

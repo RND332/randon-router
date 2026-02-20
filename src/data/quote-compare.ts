@@ -25,13 +25,19 @@ type Calldata = {
 	data: string;
 };
 
-type Token = {
-	symbol: string;
-	name: string;
-	address: string;
-	decimals: number;
-	priceUsd: number;
-};
+export interface Tokens {
+    tokens: { [key: string]: Token };
+}
+
+export interface Token {
+    symbol:   string;
+    name:     string;
+    decimals: number;
+    address:  string;
+    logoURI?: string;
+    eip2612:  boolean;
+    isNative: boolean;
+}
 
 type SimulationResult = {
 	balanceOfBefore: string;
@@ -93,42 +99,48 @@ const fallbackTokensBySymbol: Record<string, Token> = {
 		name: "USDT",
 		address: "0xdac17f958d2ee523a2206206994597c13d831ec7",
 		decimals: 6,
-		priceUsd: 0.99,
+		eip2612: false,
+		isNative: false,
 	},
 	ETH: {
 		symbol: "ETH",
 		name: "ETH",
 		address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
 		decimals: 18,
-		priceUsd: 3321.0,
+		eip2612: false,
+		isNative: true,
 	},
 	WETH: {
 		symbol: "WETH",
 		name: "WETH",
 		address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
 		decimals: 18,
-		priceUsd: 3321.0,
+		eip2612: false,
+		isNative: false,
 	},
 	USDC: {
 		symbol: "USDC",
 		name: "USDC",
 		address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
 		decimals: 6,
-		priceUsd: 0.9,
+		eip2612: false,
+		isNative: false,
 	},
 	WBTC: {
 		symbol: "WBTC",
 		name: "WBTC",
 		address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
 		decimals: 8,
-		priceUsd: 86000.0,
+		eip2612: false,
+		isNative: false,
 	},
 	CBBTC: {
 		symbol: "cbBTC",
 		name: "cbBTC",
 		address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
 		decimals: 8,
-		priceUsd: 86000.0,
+		eip2612: false,
+		isNative: false,
 	},
 };
 
@@ -309,57 +321,52 @@ async function postScraperJson(url: string, payload: any, token: string) {
 		{ strictSSL: false },
 	);
 }
-const tokenListUrl = new URL("../../public/token-list.json", import.meta.url);
 
-const toNumber = (value: unknown, fallback = 0) => {
-	const numeric = Number(value);
-	return Number.isFinite(numeric) ? numeric : fallback;
+const getChainId = (chain: SupportedChain): number | null => {
+	const config = getChainConfig(chain);
+	return config.zeroExChainId ?? config.matchaChainId ?? config.inchChainId ?? null;
 };
 
-const normalizeTokenList = (raw: unknown): Token[] => {
-	const tokenSource = (raw as any)?.tokens ?? raw;
-	const tokens = Array.isArray(tokenSource)
-		? tokenSource
-		: tokenSource && typeof tokenSource === "object"
-			? Object.values(tokenSource as Record<string, unknown>)
-			: [];
-
-	const readyTokens = tokens
-		.filter(
-			(item: any) =>
-				typeof item?.symbol === "string" && typeof item?.address === "string",
-		)
-		.map((item: any) => ({
-			symbol: item.symbol,
-			name: typeof item?.name === "string" ? item.name : item.symbol,
-			address: item.address,
-			decimals: toNumber(item.decimals, 18),
-			priceUsd: toNumber(item.priceUSD ?? item.priceUsd, 0),
-		}));
-	return readyTokens;
+const tokenListUrlForChain = (chain: SupportedChain) => {
+	const chainId = getChainId(chain);
+	if (!chainId) {
+		console.warn(`No chain ID found for chain ${chain}, cannot determine token list URL`);
+		return null;
+	}
+	return new URL(`../../public/${chainId}-token-list.json`, import.meta.url);
 };
 
-const fetchTokenList = async () => {
-	const content = await readFile(tokenListUrl, "utf-8");
-	return JSON.parse(content) as unknown;
+const ethereumTokenListUrl = new URL("../../public/1-token-list.json", import.meta.url);
+
+const fetchTokenList = async (chain: SupportedChain) => {
+	const chainUrl = tokenListUrlForChain(chain);
+
+	if (chainUrl) {
+		try {
+			const content = await readFile(chainUrl, "utf-8");
+			console.log(JSON.parse(content) as Tokens);
+			return JSON.parse(content) as Tokens;
+		} catch (error) {
+			console.warn(`Failed to read token list for chain ${chain}`, error);
+		}
+	}
+
+	const fallbackContent = await readFile(ethereumTokenListUrl, "utf-8");
+	return JSON.parse(fallbackContent) as Tokens;
 };
 
-const getTokenListInternal = async (): Promise<Token[]> => {
-	const response = await fetchTokenList();
-	const tokens = normalizeTokenList(response);
-
-	return tokens;
+const getTokenListInternal = async (chain: SupportedChain): Promise<Tokens> => {
+	return await fetchTokenList(chain);
 };
 
-const findTokenBySymbol = (tokens: Token[], symbol: string) =>
-	tokens.find((token) => token.symbol.toLowerCase() === symbol.toLowerCase());
-
-const fallbackTokenBySymbol = (symbol: string) =>
-	findTokenBySymbol(fallbackTokenList, symbol);
+const findTokenBySymbol = (tokens: Tokens, symbol: string) =>
+	Object.values(tokens.tokens).find((token) => token.symbol.toLowerCase() === symbol.toLowerCase());
 
 export const getTokenList = createServerFn({
 	method: "GET",
-}).handler(async () => getTokenListInternal());
+})
+	.inputValidator((data?: { chain?: SupportedChain }) => data)
+	.handler(async ({ data }) => getTokenListInternal(data?.chain ?? DEFAULT_CHAIN));
 
 const fallbackQuote = (aggregator: string): RawQuote => ({
 	aggregator,
@@ -956,13 +963,11 @@ export const getQuoteComparison = createServerFn({
 		try {
 			const result = await Promise.race<QuoteComparisonResult>([
 				(async () => {
-					const tokenList = await getTokenListInternal();
+					const tokenList = await getTokenListInternal(chain);
 					const tokenIn =
-						findTokenBySymbol(tokenList, tokenInSymbol) ??
-						fallbackTokenBySymbol(tokenInSymbol);
+						findTokenBySymbol(tokenList, tokenInSymbol)
 					const tokenOut =
-						findTokenBySymbol(tokenList, tokenOutSymbol) ??
-						fallbackTokenBySymbol(tokenOutSymbol);
+						findTokenBySymbol(tokenList, tokenOutSymbol) 
 
 					if (!tokenIn || !tokenOut) {
 						throw new Error("Unsupported token symbol");
