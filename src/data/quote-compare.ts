@@ -12,7 +12,7 @@ export type OrderBy = "score" | "net" | "output";
 
 export type SupportedChain =
 	| "avalanche"
-	| "bsc"
+	| "binance"
 	| "ethereum"
 	| "arbitrum"
 	| "base"
@@ -167,9 +167,9 @@ const CHAIN_CONFIG: Record<SupportedChain, ChainConfig> = {
 		zeroExChainId: 43114,
 		inchChainId: 43114,
 	},
-	bsc: {
-		routerPath: "bsc",
-		kyberPath: "bsc",
+	binance: {
+		routerPath: "binance",
+		kyberPath: "binance",
 		zeroExChainId: 56,
 		inchChainId: 56,
 	},
@@ -266,6 +266,9 @@ const simulate = async (
 ) => {
 	const { routerPath } = getChainConfig(chain);
 	try {
+		if (!calldata || !calldata.to || !calldata.data) {
+			throw new Error("Invalid calldata for simulation");
+		}
 		const body = JSON.stringify({
 					recipient: recipient,
 					outputToken,
@@ -344,7 +347,6 @@ const fetchTokenList = async (chain: SupportedChain) => {
 	if (chainUrl) {
 		try {
 			const content = await readFile(chainUrl, "utf-8");
-			console.log(JSON.parse(content) as Tokens);
 			return JSON.parse(content) as Tokens;
 		} catch (error) {
 			console.warn(`Failed to read token list for chain ${chain}`, error);
@@ -413,10 +415,16 @@ const callBlazingTokenPrice = async (
 	amountIn: string,
 	chain: SupportedChain,
 ) => {
-	const { routerPath } = getChainConfig(chain);
-	const url = `https://dc1.invisium.com/router/${routerPath}/quote?asset_in=${tokenIn.address}&asset_out=${tokenOut.address}&amount_in=${amountIn}&recipient=${recipient}&min_buy_amount=0`;
-	const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
-	return res.gas_price_token_in as string;
+	try {
+
+		const { routerPath } = getChainConfig(chain);
+		const url = `https://dc1.invisium.com/router/${routerPath}/quote?asset_in=${tokenIn.address}&asset_out=${tokenOut.address}&amount_in=${amountIn}&recipient=${recipient}&min_buy_amount=0`;
+		const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
+		return res.gas_price_token_in as string;
+	} catch (error) {
+		console.warn("Blazing token price call failed", error);
+		return "0";
+	}
 };
 
 const callBlazingNew = async (
@@ -512,7 +520,7 @@ const kyberswap = async (
 				"eyJhbGciOiJSUzI1NiIsImtpZCI6IjYxZTIyYTA4LTYyYWQtNDYwMC04MGIzLWFlMDljNTIzOGNmMSIsInR5cCI6IkpXVCJ9.eyJhdWQiOltdLCJjbGllbnRfaWQiOiI4YTk1Y2VkOC0xNTMwLTQ1ZDAtYmMxNS1hNTYxNGQxZDhkMDgiLCJleHAiOjE3NzA3NjE0MTMsImV4dCI6e30sImlhdCI6MTc3MDc1NzgxMywiaXNzIjoiaHR0cHM6Ly9vYXV0aC1hcGkua3liZXJzd2FwLmNvbS8iLCJqdGkiOiJlOTAzN2I3MS04NDQ1LTQ2MGMtOWI3Yy05YzJmNWZhNThkYTciLCJuYmYiOjE3NzA3NTc4MTMsInNjcCI6W10sInN1YiI6IjM2ZDBlMmVhLTFhOTQtNDc3NC1iNjE1LTNiOGQyMmZjMTQxMCJ9.nVEf7izHsem5eCaGw1zNuAl7_pGm3Ypcq-Kg9tCQEJhHoeUKaIAYJaoxLPqS4Ce0kJV3cqVkYzEYcetz3YkhslS7k_7rapVJush7G0U2KGI4sHApGab1y9nzDP4aAytt05NHEp5UBikGmlsUWCUlukMdSuJ-J2gBGAcrHh58ZqQuYq94wKxKA31X0_W3X-jMulkvEnUMH_VdUmWkVn8WPv34f6bDeWUncF3uhia8bL4mtwrSzBxtL68Eu7SLIuZZrExAxou1BiSJJ6mvy2pgc_XLiRBcnhwUjDwmlnM0ZJ2NuYtFmHsMnTs55mUZgdNziA6C2b1SxXa14WCDmOwssIeAAopa3OBGsEw56UGbJ3docmDDNRUGIrvrul7kaagq2qbiXDLSnBVUeMHJ9mMjL9pOUOfsT4eNTOcVhfqxho8L1TWxbPrAjiCtNwjQlHaJ_N4t-i9Wpx6Sh8M8cRyieDWCpJLF5uD8-jDpImYp88kQQnrNft2HNhckCC-LzLwe8hmb0kZRexf8IfJVN4hBqOhYYKgAvpTN5i0dsIeNUzJWLd5EYww_pM5MMIOqje5-NeeGTpEK0PZ92YXegjT34bsBP8D5e9E-2tCp3iI7nLo2HuFw9CWNm-DsKYC3nHczhXBu6h0T6D2ykUD-6haR0cYAy8poEvEi7QRzaHlGTwE",
 			);
 		} catch (error) {
-			console.warn("KyberSwap calldata build failed", error);
+			console.warn("KyberSwap calldata build failed");
 		}
 	}
 	const calldata = {
@@ -675,7 +683,7 @@ const inch = async (
 			const buildUrl = `https://proxy-app.1inch.io/v2.0/bff/v1.0/v6.0/${inchChainId}/build?version=2`;
 			calldataResponse = await postScraperJson(buildUrl, data, token);
 		} catch (error) {
-			console.warn("1Inch calldata build failed", error);
+			console.warn("1Inch calldata build failed");
 		}
 	}
 	const calldata = {
@@ -704,11 +712,11 @@ type QuoteTask = {
 const settleQuotes = async (tasks: QuoteTask[]) => {
 	const results = await Promise.allSettled(tasks.map((task) => task.promise));
 	// console log any errors
-	// results.forEach((result, index) => {
-	// 	if (result.status === "rejected") {
-	// 		console.warn(`Quote task ${tasks[index].label} failed:`, result.reason);
-	// 	}
-	// });
+	results.forEach((result, index) => {
+		if (result.status === "rejected") {
+			console.warn(`Quote task ${tasks[index].label} failed:`, result.reason);
+		}
+	});
 	return results.map((result, index) =>
 		result.status === "fulfilled"
 			? result.value
@@ -916,10 +924,6 @@ const calculateScores = (
 			const euclidean = outputDelta.pow(2).plus(gasDelta.pow(2)).sqrt();
 			const normalized = euclidean.dividedBy(sqrtTwo); // 0..1
 			const bounded = BigNumber.maximum(0, BigNumber.minimum(1, normalized));
-
-			console.log(
-				`Quote ${item.aggregator}: outputNorm=${outputNorm.toString()}, gasNorm=${gasNorm.toString()}, outputDelta=${outputDelta.toString()}, gasDelta=${gasDelta.toString()}, euclidean=${euclidean.toString()}, normalized=${normalized.toString()}, bounded=${bounded.toString()}`,
-			);
 
 			return {
 				...item,

@@ -54,7 +54,7 @@ type SearchState = {
 const DEFAULT_TOKEN_AMOUNT = "1";
 const CHAIN_OPTIONS: Array<{ value: SupportedChain; label: string }> = [
 	{ value: "avalanche", label: "Avalanche" },
-	{ value: "bsc", label: "BSC" },
+	{ value: "binance", label: "Binance" },
 	{ value: "ethereum", label: "Ethereum" },
 	{ value: "arbitrum", label: "Arbitrum" },
 	{ value: "base", label: "Base" },
@@ -209,6 +209,7 @@ const RawResponseCell = ({ value }: { value: unknown }) => {
 	}, []);
 
 	if (!rawText) {
+		console.warn("No raw response available for this quote row", value);
 		return <span className="text-slate-400">—</span>;
 	}
 
@@ -465,6 +466,7 @@ function App() {
 	});
 
 	const deferredResults = useDeferredValue(query.data?.results ?? []);
+	console.log("Quote comparison query", query.data?.results);
 
 	const gasPriceTokenIn = useMemo(() => {
 		if (!query.data?.gasPriceTokenIn) {
