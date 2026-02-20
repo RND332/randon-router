@@ -477,25 +477,28 @@ function App() {
 		const blazingDefault = deferredResults.find(
 			(row) => row.aggregator === "Blazing Default",
 		);
-		if (!blazingDefault?.amountOut) {
+		const defaultSimulationOutput =
+			blazingDefault?.simulationResult?.outputTokenAmount;
+		if (!defaultSimulationOutput) {
 			return deferredResults;
 		}
 
-		let defaultAmountOut: bigint;
+		let defaultSimulatedOutput: bigint;
 		try {
-			defaultAmountOut = BigInt(blazingDefault.amountOut);
+			defaultSimulatedOutput = BigInt(defaultSimulationOutput);
 		} catch {
 			return deferredResults;
 		}
 
 		return deferredResults.filter((row) => {
 			const isBlazingChunk = row.aggregator.startsWith("Blazing chunks ");
-			if (!isBlazingChunk || !row.amountOut) {
+			const chunkSimulationOutput = row.simulationResult?.outputTokenAmount;
+			if (!isBlazingChunk || !chunkSimulationOutput) {
 				return true;
 			}
 
 			try {
-				return BigInt(row.amountOut) > defaultAmountOut;
+				return BigInt(chunkSimulationOutput) > defaultSimulatedOutput;
 			} catch {
 				return true;
 			}
