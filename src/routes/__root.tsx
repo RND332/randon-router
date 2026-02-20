@@ -22,7 +22,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 				content: "width=device-width, initial-scale=1",
 			},
 			{
-				title: "TanStack Start Starter",
+				title: "Meta aggregator UI",
 			},
 		],
 		links: [
@@ -55,6 +55,10 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 		<html lang="en">
 			<head>
 				<HeadContent />
+				<script
+					crossOrigin="anonymous"
+					src="//unpkg.com/react-scan/dist/auto.global.js"
+				></script>
 			</head>
 			<body>
 				{children}
@@ -74,6 +78,14 @@ function NotFound() {
 			</p>
 			<Link
 				to="/"
+				search={{
+					chain: "ethereum",
+					tokenIn: "WETH",
+					tokenOut: "WBTC",
+					tokenAmount: "1",
+					order: "net",
+					disablePrice: "false",
+				}}
 				className="rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold transition hover:border-slate-500"
 			>
 				Go to dashboard

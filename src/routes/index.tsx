@@ -191,13 +191,7 @@ const stringifyRawResponse = (value: unknown) => {
 	}
 };
 
-const RawResponseCell = ({
-	value,
-	failed,
-}: {
-	value: unknown;
-	failed: boolean;
-}) => {
+const RawResponseCell = ({ value }: { value: unknown }) => {
 	const [copied, setCopied] = useState(false);
 	const timeoutRef = useRef<number | null>(null);
 	const rawText = useMemo(
@@ -213,7 +207,7 @@ const RawResponseCell = ({
 		};
 	}, []);
 
-	if (failed || !rawText) {
+	if (!rawText) {
 		return <span className="text-slate-400">—</span>;
 	}
 
@@ -458,7 +452,7 @@ function App() {
 		refetchOnWindowFocus: false,
 	});
 
-	console.log("Query data:", query.data);
+	console.log("Query data:", query.data, query.error);
 
 	const deferredResults = useDeferredValue(query.data?.results ?? []);
 
@@ -820,32 +814,17 @@ function App() {
 			columnHelper.accessor("rawResponse", {
 				header: "Raw",
 				enableSorting: false,
-				cell: (info) => (
-					<RawResponseCell
-						value={info.getValue()}
-						failed={info.row.original.failed ?? false}
-					/>
-				),
+				cell: (info) => <RawResponseCell value={info.getValue()} />,
 			}),
 			columnHelper.accessor("calldataResponse", {
 				header: "Calldata",
 				enableSorting: false,
-				cell: (info) => (
-					<RawResponseCell
-						value={info.getValue()}
-						failed={info.row.original.failed ?? false}
-					/>
-				),
+				cell: (info) => <RawResponseCell value={info.getValue()} />,
 			}),
 			columnHelper.accessor("simulationResult", {
 				header: "Simulation",
 				enableSorting: false,
-				cell: (info) => (
-					<RawResponseCell
-						value={info.getValue()}
-						failed={info.row.original.failed ?? false}
-					/>
-				),
+				cell: (info) => <RawResponseCell value={info.getValue()} />,
 			}),
 			columnHelper.accessor("netOutput", {
 				header: "Net",

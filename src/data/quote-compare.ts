@@ -45,6 +45,7 @@ type SimulationResult = {
 	simTime: string;
 	simTimeTotal: string;
 	requestId: string;
+	error?: string;
 };
 
 type RawQuote = {
@@ -252,26 +253,54 @@ const simulate = async (
 	senderAddress: string = sender,
 ) => {
 	const { routerPath } = getChainConfig(chain);
-	return fetchJson(
-		`https://dev.invisium.com/simulation/${routerPath}/sim-dln-output-amount`,
-		{
-			method: "POST",
-			body: {
-				recipient: recipient,
-				outputToken,
-				tokenIn,
-				tokenInAmount,
-				tx: {
-					from: senderAddress,
-					to: calldata.to,
-					input: calldata.data,
+	try {
+		if (!calldata || !calldata.to || !calldata.data) {
+			throw new Error("Invalid calldata for simulation");
+		}
+		return await fetch(
+			`https://dc1.invisium.com/simulation/${routerPath}/sim-dln-output-amount`,
+			{
+				method: "POST",
+				body: {
+					recipient: recipient,
+					outputToken,
+					tokenIn,
+					tokenInAmount,
+					tx: {
+						from: senderAddress,
+						to: calldata.to,
+						input: calldata.data,
+					},
+				} as any,
+				headers: {
+					"content-type": "application/json",
 				},
-			} as any,
-			headers: {
-				"content-type": "application/json",
 			},
-		},
-	);
+		).then((res) => {
+			if (!res.ok) {
+				throw new Error(
+					`Simulation API error: ${res.status} ${res.statusText}`,
+				);
+			}
+			return res.json();
+		});
+	} catch (error) {
+		console.warn("Simulation failed", error);
+		return {
+			balanceOfBefore: "0",
+			balanceOfAfter: "0",
+			outputTokenAmount: "0",
+			outputToken: "",
+			approveTxGasUsed: 0,
+			swapTxGasUsed: 0,
+			isSuccessful: false,
+			simBlockNumber: "0",
+			simTime: "",
+			simTimeTotal: "",
+			requestId: "Simulation request failed",
+			error: error instanceof Error ? error.message : String(error),
+		} as SimulationResult;
+	}
 };
 
 async function postScraperJson(url: string, payload: any, token: string) {
@@ -716,9 +745,25 @@ const simulateAll = async (
 		),
 	);
 	const simulated_quotes = quotes.map((quote, index) => {
-		results[index].status === "fulfilled"
-			? (quote.simulationResult = results[index].value)
-			: (quote.simulationResult = undefined);
+		if (results[index].status === "fulfilled") {
+			quote.simulationResult = results[index].value;
+		} else {
+			quote.simulationResult = undefined;
+			// Write error to simulationResult
+			quote.simulationResult = {
+				balanceOfBefore: "0",
+				balanceOfAfter: "0",
+				outputTokenAmount: "0",
+				outputToken: "",
+				approveTxGasUsed: 0,
+				swapTxGasUsed: 0,
+				isSuccessful: false,
+				simBlockNumber: "0",
+				simTime: "",
+				simTimeTotal: "",
+				requestId: results[index].reason?.message ?? "Unknown error",
+			};
+		}
 		return quote;
 	});
 
