@@ -254,11 +254,7 @@ const simulate = async (
 ) => {
 	const { routerPath } = getChainConfig(chain);
 	try {
-		return await fetch(
-			`https://dc1.invisium.com/simulation/${routerPath}/sim-dln-output-amount`,
-			{
-				method: "POST",
-				body: {
+		const body = JSON.stringify({
 					recipient: recipient,
 					outputToken,
 					tokenIn,
@@ -268,21 +264,20 @@ const simulate = async (
 						to: calldata.to,
 						input: calldata.data,
 					},
-				} as any,
+				});
+		const result = await fetch(
+			`https://dc1.invisium.com/simulation/${routerPath}/sim-dln-output-amount`,
+			{
+				method: "POST",
+				body: body,
 				headers: {
 					"Content-Type": "application/json",
 				},
 			},
-		).then((res) => {
-			if (!res.ok) {
-				throw new Error(
-					`Simulation API error: ${res.status} ${res.statusText}`,
-				);
-			}
-			return res.json();
-		});
+		)
+		return await result.json();
 	} catch (error) {
-		console.warn("Simulation failed", error);
+		console.warn("Simulation failed", String(error));
 		return {
 			balanceOfBefore: "0",
 			balanceOfAfter: "0",
