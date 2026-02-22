@@ -250,7 +250,6 @@ const fetchJson = async (
 		headers,
 		json: true,
 		timeout: 20000,
-		proxy: "http://localhost:2080"
 	};
 
 	if (body !== undefined) {
