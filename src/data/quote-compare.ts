@@ -64,6 +64,7 @@ type RawQuote = {
 	calldataResponse: Calldata | null;
 	simulationResult: SimulationResult | undefined;
 	failed?: boolean;
+	error?: string | null;
 };
 
 export type QuoteRow = RawQuote & {
@@ -90,6 +91,7 @@ export type QuoteComparisonResult = {
 	gasPriceTokenIn: string;
 	order: OrderBy;
 	results: QuoteRow[];
+	aggregatorErrors: Record<string, string>;
 	error: string | null;
 	status: "success" | "error";
 };
@@ -388,7 +390,22 @@ const fallbackQuote = (aggregator: string): RawQuote => ({
 	rawResponse: undefined,
 	simulationResult: undefined,
 	calldataResponse: null,
+	error: null,
 });
+
+const toErrorMessage = (error: unknown): string => {
+	if (error instanceof Error) {
+		return error.message;
+	}
+	if (typeof error === "string") {
+		return error;
+	}
+	try {
+		return JSON.stringify(error);
+	} catch {
+		return String(error);
+	}
+};
 
 const calldataAggregators = new Set(["1Inch", "KyberSwap"]);
 
@@ -557,39 +574,65 @@ const zeroEx = async (
 ): Promise<RawQuote> => {
 	const apiKey = process.env.ZEROX_API_KEY;
 	if (!apiKey) {
-		return fallbackQuote("0x");
+		return {
+			...fallbackQuote("0x"),
+			failed: true,
+			error: "Missing ZEROX_API_KEY",
+		};
 	}
 
 	const { zeroExChainId } = getChainConfig(chain);
 	if (!zeroExChainId) {
-		return fallbackQuote("0x");
+		return {
+			...fallbackQuote("0x"),
+			failed: true,
+			error: `0x is not supported for chain ${chain}`,
+		};
 	}
 
-	const url = `https://api.0x.org/swap/allowance-holder/quote?chainId=${zeroExChainId}&sellToken=${tokenIn.address}&buyToken=${tokenOut.address}&sellAmount=${amountIn}&taker=${recipient}`;
-	const res = await fetchJson(url, {
-		method: "GET",
-		headers: {
-			"0x-api-key": apiKey,
-			"0x-version": "v2",
-		},
-	});
+	try {
+		const url = `https://api.0x.org/swap/allowance-holder/quote?chainId=${zeroExChainId}&sellToken=${tokenIn.address}&buyToken=${tokenOut.address}&sellAmount=${amountIn}&taker=${recipient}`;
+		const res = await fetchJson(url, {
+			method: "GET",
+			headers: {
+				"0x-api-key": apiKey,
+				"0x-version": "v2",
+			},
+		});
 
-	const fills = res?.route?.fills;
-	const sources = Array.isArray(fills)
-		? fills.map((fill: { source: string }) => fill.source)
-		: [];
+		if (!res?.transaction?.to || !res?.transaction?.data) {
+			return {
+				...fallbackQuote("0x"),
+				failed: true,
+				error: "0x response missing transaction calldata",
+				rawResponse: res,
+			};
+		}
 
-	const calldata = { to: res.transaction.to, data: res.transaction.data };
+		const fills = res?.route?.fills;
+		const sources = Array.isArray(fills)
+			? fills.map((fill: { source: string }) => fill.source)
+			: [];
 
-	return {
-		aggregator: "0x",
-		amountOut: res?.buyAmount ? String(res.buyAmount) : "0",
-		gasUsed: Number(res?.transaction?.gas ?? 0),
-		sources,
-		rawResponse: res,
-		calldataResponse: calldata,
-		simulationResult: undefined,
-	};
+		const calldata = { to: res.transaction.to, data: res.transaction.data };
+
+		return {
+			aggregator: "0x",
+			amountOut: res?.buyAmount ? String(res.buyAmount) : "0",
+			gasUsed: Number(res?.transaction?.gas ?? 0),
+			sources,
+			rawResponse: res,
+			calldataResponse: calldata,
+			simulationResult: undefined,
+			error: null,
+		};
+	} catch (error) {
+		return {
+			...fallbackQuote("0x"),
+			failed: true,
+			error: `0x quote failed: ${toErrorMessage(error)}`,
+		};
+	}
 };
 
 const matcha = async (
@@ -726,7 +769,9 @@ const settleQuotes = async (tasks: QuoteTask[]) => {
 	// console log any errors
 	results.forEach((result, index) => {
 		if (result.status === "rejected") {
-			console.warn(`Quote task ${tasks[index].label} failed:`);
+			console.warn(
+				`Quote task ${tasks[index].label} failed: ${toErrorMessage(result.reason)}`,
+			);
 		}
 	});
 	return results.map((result, index) =>
@@ -741,6 +786,7 @@ const settleQuotes = async (tasks: QuoteTask[]) => {
 					calldataResponse: null,
 					simulationResult: undefined,
 					failed: true,
+					error: toErrorMessage(result.reason),
 				} satisfies RawQuote),
 	);
 };
@@ -767,8 +813,16 @@ const simulateAll = async (
 	const simulated_quotes = quotes.map((quote, index) => {
 		if (results[index].status === "fulfilled") {
 			quote.simulationResult = results[index].value;
+			if (!quote.error && !results[index].value.isSuccessful) {
+				quote.error =
+					results[index].value.error ??
+					results[index].value.requestId ??
+					"Simulation failed";
+			}
 		} else {
 			// Write error to simulationResult
+			const simulationError =
+				results[index].reason?.message ?? toErrorMessage(results[index].reason);
 			quote.simulationResult = {
 				balanceOfBefore: "0",
 				balanceOfAfter: "0",
@@ -780,8 +834,11 @@ const simulateAll = async (
 				simBlockNumber: "0",
 				simTime: "",
 				simTimeTotal: "",
-				requestId: results[index].reason?.message ?? "Unknown error",
+				requestId: simulationError,
 			};
+			if (!quote.error) {
+				quote.error = simulationError;
+			}
 		}
 		return quote;
 	});
@@ -1067,6 +1124,19 @@ export const getQuoteComparison = createServerFn({
 						ordered.sort((a, b) => Number(b.amountOut) - Number(a.amountOut));
 					}
 
+					const aggregatorErrors = Object.fromEntries(
+						ordered
+							.map((quote) => {
+								const simulationError =
+									!quote.simulationResult?.isSuccessful
+										? quote.simulationResult?.error ?? quote.simulationResult?.requestId
+										: null;
+								const error = quote.error ?? simulationError ?? null;
+								return [quote.aggregator, error] as const;
+							})
+							.filter((entry): entry is [string, string] => Boolean(entry[1])),
+					);
+
 					return {
 						chain,
 						tokenIn: tokenInSymbol,
@@ -1076,6 +1146,7 @@ export const getQuoteComparison = createServerFn({
 						gasPriceTokenIn: gasPriceRaw,
 						order,
 						results: ordered,
+						aggregatorErrors,
 						error: null,
 						status: "success",
 					};
@@ -1091,6 +1162,8 @@ export const getQuoteComparison = createServerFn({
 				),
 			]);
 
+			console.log(result)
+
 			return result;
 		} catch (error) {
 			console.error("Error in getQuoteComparison:", error);
@@ -1103,6 +1176,7 @@ export const getQuoteComparison = createServerFn({
 				gasPriceTokenIn: "0",
 				order,
 				results: [],
+				aggregatorErrors: {},
 				error: error instanceof Error ? error.message : String(error),
 				status: "error",
 			};
