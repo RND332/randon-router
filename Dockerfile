@@ -4,6 +4,9 @@ WORKDIR /app
 
 RUN corepack enable
 
+ARG ZEROX_API_KEY
+ENV ZEROX_API_KEY=$ZEROX_API_KEY
+
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 

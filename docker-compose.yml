@@ -3,10 +3,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        ZEROX_API_KEY: ${ZEROX_API_KEY}
+    env_file:
+      - .env
     ports:
       - "7128:3000"
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 3000
+      ZEROX_API_KEY: ${ZEROX_API_KEY}
     restart: unless-stopped
