@@ -3,6 +3,7 @@ import BigNumber from "bignumber.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "fs/promises";
 import { createRequire } from "module";
+import { ag } from "node_modules/@faker-js/faker/dist/airline-Dz1uGqgJ";
 
 declare global {
 	var __inchIdCounter: number | undefined;
@@ -166,12 +167,14 @@ const CHAIN_CONFIG: Record<SupportedChain, ChainConfig> = {
 		kyberPath: "avalanche",
 		zeroExChainId: 43114,
 		inchChainId: 43114,
+		matchaChainId: 43114,
 	},
 	binance: {
 		routerPath: "binance",
-		kyberPath: "binance",
+		kyberPath: "bsc",
 		zeroExChainId: 56,
 		inchChainId: 56,
+		matchaChainId: 56,
 	},
 	ethereum: {
 		routerPath: "ethereum",
@@ -185,24 +188,28 @@ const CHAIN_CONFIG: Record<SupportedChain, ChainConfig> = {
 		kyberPath: "arbitrum",
 		zeroExChainId: 42161,
 		inchChainId: 42161,
+		matchaChainId: 42161,
 	},
 	base: {
 		routerPath: "base",
 		kyberPath: "base",
 		zeroExChainId: 8453,
 		inchChainId: 8453,
+		matchaChainId: 8453,
 	},
 	optimism: {
 		routerPath: "optimism",
 		kyberPath: "optimism",
 		zeroExChainId: 10,
 		inchChainId: 10,
+		matchaChainId: 10,
 	},
 	polygon: {
 		routerPath: "polygon",
 		kyberPath: "polygon",
 		zeroExChainId: 137,
 		inchChainId: 137,
+		matchaChainId: 137,
 	},
 	hyperliquid: {
 		routerPath: "hyperliquid",
@@ -243,6 +250,7 @@ const fetchJson = async (
 		headers,
 		json: true,
 		timeout: 20000,
+		proxy: "http://localhost:2080"
 	};
 
 	if (body !== undefined) {
@@ -257,6 +265,7 @@ const fetchJson = async (
 };
 
 const simulate = async (
+	aggregator: string,
 	calldata: Calldata,
 	tokenIn: string,
 	outputToken: string,
@@ -266,6 +275,7 @@ const simulate = async (
 ) => {
 	const { routerPath } = getChainConfig(chain);
 	try {
+		console.log("Simulating with calldata:", aggregator, calldata);
 		if (!calldata || !calldata.to || !calldata.data) {
 			throw new Error("Invalid calldata for simulation");
 		}
@@ -290,6 +300,7 @@ const simulate = async (
 				},
 			},
 		)
+		console.log(aggregator, "Simulation response status:", result.status);
 		return await result.json();
 	} catch (error) {
 		console.warn("Simulation failed", String(error));
@@ -422,7 +433,7 @@ const callBlazingTokenPrice = async (
 		const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
 		return res.gas_price_token_in as string;
 	} catch (error) {
-		console.warn("Blazing token price call failed", error);
+		console.warn("Blazing token price call failed");
 		return "0";
 	}
 };
@@ -590,6 +601,7 @@ const matcha = async (
 ): Promise<RawQuote> => {
 	const { matchaChainId } = getChainConfig(chain);
 	if (!matchaChainId) {
+		console.log(`No Matcha chain ID found for chain ${chain}, skipping Matcha quote`);
 		return fallbackQuote("Matcha");
 	}
 
@@ -628,6 +640,7 @@ const inch = async (
 ): Promise<RawQuote> => {
 	const { inchChainId } = getChainConfig(chain);
 	if (!inchChainId) {
+		console.log(`No 1Inch chain ID found for chain ${chain}, skipping 1Inch quote`);
 		return fallbackQuote("1Inch");
 	}
 
@@ -714,7 +727,7 @@ const settleQuotes = async (tasks: QuoteTask[]) => {
 	// console log any errors
 	results.forEach((result, index) => {
 		if (result.status === "rejected") {
-			console.warn(`Quote task ${tasks[index].label} failed:`, result.reason);
+			console.warn(`Quote task ${tasks[index].label} failed:`);
 		}
 	});
 	return results.map((result, index) =>
@@ -743,6 +756,7 @@ const simulateAll = async (
 	const results = await Promise.allSettled(
 		quotes.map((quote) =>
 			simulate(
+				quote.aggregator,
 				quote.calldataResponse as Calldata,
 				tokenIn.address,
 				tokenOut.address,
@@ -755,7 +769,6 @@ const simulateAll = async (
 		if (results[index].status === "fulfilled") {
 			quote.simulationResult = results[index].value;
 		} else {
-			quote.simulationResult = undefined;
 			// Write error to simulationResult
 			quote.simulationResult = {
 				balanceOfBefore: "0",
@@ -857,7 +870,8 @@ const calculateScores = (
 			const simulation = item.simulationResult;
 			return (
 				!!simulation?.isSuccessful &&
-				Number.isFinite(Number(simulation.outputTokenAmount))
+				Number.isFinite(Number(simulation.outputTokenAmount)) &&
+				new BigNumber(simulation.outputTokenAmount).isGreaterThan(0)
 			);
 		});
 
@@ -897,7 +911,7 @@ const calculateScores = (
 				simulation.swapTxGasUsed,
 			);
 
-			if (!outputValue.isFinite() || !gasValue.isFinite()) {
+			if (!outputValue.isFinite() || !gasValue.isFinite() || outputValue.isZero()) {
 				return {
 					...item,
 					score: Number.POSITIVE_INFINITY,

@@ -424,12 +424,6 @@ function App() {
 		staleTime: 60 * 60 * 1000, // 1 hour
 	});
 
-	console.log(
-		"Token list query",
-		formState.chain,
-		Object.keys(tokenListQuery.data?.tokens ?? {}).length,
-	);
-
 	const tokensForSelect = useMemo(() => {
 		const tokenList = tokenListQuery.data;
 		if (tokenList) {
