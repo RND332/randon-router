@@ -1,0 +1,6 @@
+apiVersion: v2
+name: meta-ui
+description: Meta UI
+
+type: application
+version: 0.1.0

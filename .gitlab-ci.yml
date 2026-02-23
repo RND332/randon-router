@@ -1,0 +1,33 @@
+stages:
+  - build
+  - deploy
+
+default:
+  tags:
+    - invisium-com-aln-eu
+
+variables:
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_HOST: "tcp://localhost:2375"
+
+build:
+  image: docker:28-cli
+  stage: build
+  services:
+    - docker:28-dind
+  script: |
+    set -ex
+    sleep 15
+    # Build image with it
+    echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+    docker build -f Dockerfile -t $CI_REGISTRY_IMAGE:p$CI_PIPELINE_ID . --build-arg ZEROX_API_KEY=$ZEROX_API_KEY
+    docker push $CI_REGISTRY_IMAGE:p$CI_PIPELINE_ID
+
+PRODUCTION deploy:
+  image: alpine/helm:3
+  stage: deploy
+  only:
+    - master
+  script:
+    - helm upgrade meta-ui .helm --install --namespace debridge-develop --atomic --wait --wait-for-jobs --timeout 2m30s --set repo=$CI_REGISTRY_IMAGE,tag=p$CI_PIPELINE_ID,zerox_api_key=$ZEROX_API_KEY
+    - curl https://meta-aggregator-ui.invisium.com --fail

@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "meta-ui{{ $.Values.suffix }}"
+  labels:
+    service: "meta-ui{{ $.Values.suffix }}"
+spec:
+  replicas: 2
+  minReadySeconds: 15
+  selector:
+    matchLabels:
+      service: "meta-ui{{ $.Values.suffix }}"
+  template:
+    metadata:
+      labels:
+        service: "meta-ui{{ $.Values.suffix }}"
+        app.kubernetes.io/name: "meta-ui{{ $.Values.suffix }}"
+    spec:
+      imagePullSecrets:
+        - name: "gitlab-pull"
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: frontend
+          image: "{{ $.Values.repo }}:{{ $.Values.tag }}"
+          livenessProbe:
+            exec:
+              command: ["/bin/true"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command: ["/bin/true"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+          ports:
+            - name: "http"
+              containerPort: 3000
+          environment:
+            - name: ZEROX_API_KEY
+              value: "{{ $.Values.zerox_api_key }}"
+          resources:
+            limits:
+              cpu: 200m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "meta-ui{{ $.Values.suffix }}"
+spec:
+  type: ClusterIP
+  selector:
+    service: "meta-ui{{ $.Values.suffix }}"
+  ports:
+    - port: 80
+      targetPort: 3000
+      name: "http"
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: "meta-ui{{ $.Values.suffix }}"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`meta-aggregator-ui.invisium.com`)
+      services:
+        - name: "meta-ui{{ $.Values.suffix }}"
+          nativeLB: true
+          port: http
+  tls:
+    secretName: cloudflare-meta-aggregator-ui
