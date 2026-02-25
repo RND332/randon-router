@@ -547,6 +547,36 @@ function App() {
 				),
 				enableSorting: false,
 			}),
+			columnHelper.display({
+				id: "status",
+				header: "Status",
+				cell: (info) => {
+					const failed = Boolean(info.row.original.failed);
+					const errorMsg =
+						info.row.original.error ??
+						info.row.original.simulationResult?.error ??
+						info.row.original.simulationResult?.requestId ??
+						null;
+					return (
+						<Popover>
+							<PopoverTrigger asChild>
+								<span>
+									<Badge variant={failed ? "destructive" : "outline"}>
+										{failed ? "Failed" : "Passed"}
+									</Badge>
+								</span>
+							</PopoverTrigger>
+							{failed && (
+								<PopoverContent align="start" className="bg-white">
+									<div className="max-w-xs max-h-72 overflow-auto p-2 text-sm text-slate-700">
+										{errorMsg ?? "Unknown error"}
+									</div>
+								</PopoverContent>
+							)}
+						</Popover>
+					);
+				},
+			}),
 			columnHelper.group({
 				id: "outputGroup",
 				header: "Output",
@@ -922,6 +952,8 @@ function App() {
 		],
 		[tokenOutDecimals],
 	);
+
+	console.log("Displayed results", displayedResults);
 
 	const table = useReactTable({
 		data: displayedResults,
