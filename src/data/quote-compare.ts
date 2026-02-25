@@ -3,7 +3,6 @@ import BigNumber from "bignumber.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "fs/promises";
 import { createRequire } from "module";
-import { ag } from "node_modules/@faker-js/faker/dist/airline-Dz1uGqgJ";
 
 declare global {
 	var __inchIdCounter: number | undefined;
@@ -27,17 +26,17 @@ type Calldata = {
 };
 
 export interface Tokens {
-    tokens: { [key: string]: Token };
+	tokens: { [key: string]: Token };
 }
 
 export interface Token {
-    symbol:   string;
-    name:     string;
-    decimals: number;
-    address:  string;
-    logoURI?: string;
-    eip2612:  boolean;
-    isNative: boolean;
+	symbol: string;
+	name: string;
+	decimals: number;
+	address: string;
+	logoURI?: string;
+	eip2612: boolean;
+	isNative: boolean;
 }
 
 type SimulationResult = {
@@ -80,6 +79,8 @@ export type QuoteComparisonInput = {
 	tokenAmount: string;
 	order?: OrderBy;
 	disablePrice?: "true" | "false";
+	// list of aggregators to disable/skip on the server
+	disabledAggregators?: string[];
 };
 
 export type QuoteComparisonResult = {
@@ -281,16 +282,16 @@ const simulate = async (
 			throw new Error("Invalid calldata for simulation");
 		}
 		const body = JSON.stringify({
-					recipient: recipient,
-					outputToken,
-					tokenIn,
-					tokenInAmount,
-					tx: {
-						from: senderAddress,
-						to: calldata.to,
-						input: calldata.data,
-					},
-				});
+			recipient: recipient,
+			outputToken,
+			tokenIn,
+			tokenInAmount,
+			tx: {
+				from: senderAddress,
+				to: calldata.to,
+				input: calldata.data,
+			},
+		});
 		const result = await fetch(
 			`https://dc1.invisium.com/simulation/${routerPath}/sim-dln-output-amount`,
 			{
@@ -300,7 +301,7 @@ const simulate = async (
 					"Content-Type": "application/json",
 				},
 			},
-		)
+		);
 		console.log(aggregator, "Simulation response status:", result.status);
 		return await result.json();
 	} catch (error) {
@@ -339,19 +340,26 @@ async function postScraperJson(url: string, payload: any, token: string) {
 
 const getChainId = (chain: SupportedChain): number | null => {
 	const config = getChainConfig(chain);
-	return config.zeroExChainId ?? config.matchaChainId ?? config.inchChainId ?? null;
+	return (
+		config.zeroExChainId ?? config.matchaChainId ?? config.inchChainId ?? null
+	);
 };
 
 const tokenListUrlForChain = (chain: SupportedChain) => {
 	const chainId = getChainId(chain);
 	if (!chainId) {
-		console.warn(`No chain ID found for chain ${chain}, cannot determine token list URL`);
+		console.warn(
+			`No chain ID found for chain ${chain}, cannot determine token list URL`,
+		);
 		return null;
 	}
 	return new URL(`../../public/${chainId}-token-list.json`, import.meta.url);
 };
 
-const ethereumTokenListUrl = new URL("../../public/1-token-list.json", import.meta.url);
+const ethereumTokenListUrl = new URL(
+	"../../public/1-token-list.json",
+	import.meta.url,
+);
 
 const fetchTokenList = async (chain: SupportedChain) => {
 	const chainUrl = tokenListUrlForChain(chain);
@@ -374,13 +382,17 @@ const getTokenListInternal = async (chain: SupportedChain): Promise<Tokens> => {
 };
 
 const findTokenBySymbol = (tokens: Tokens, symbol: string) =>
-	Object.values(tokens.tokens).find((token) => token.symbol.toLowerCase() === symbol.toLowerCase());
+	Object.values(tokens.tokens).find(
+		(token) => token.symbol.toLowerCase() === symbol.toLowerCase(),
+	);
 
 export const getTokenList = createServerFn({
 	method: "GET",
 })
 	.inputValidator((data?: { chain?: SupportedChain }) => data)
-	.handler(async ({ data }) => getTokenListInternal(data?.chain ?? DEFAULT_CHAIN));
+	.handler(async ({ data }) =>
+		getTokenListInternal(data?.chain ?? DEFAULT_CHAIN),
+	);
 
 const fallbackQuote = (aggregator: string): RawQuote => ({
 	aggregator,
@@ -443,7 +455,6 @@ const callBlazingTokenPrice = async (
 	chain: SupportedChain,
 ) => {
 	try {
-
 		const { routerPath } = getChainConfig(chain);
 		const url = `https://dc1.invisium.com/router/${routerPath}/quote?asset_in=${tokenIn.address}&asset_out=${tokenOut.address}&amount_in=${amountIn}&recipient=${recipient}&min_buy_amount=0`;
 		const res = await fetchJson(url, { method: "GET" }, { strictSSL: false });
@@ -643,7 +654,9 @@ const matcha = async (
 ): Promise<RawQuote> => {
 	const { matchaChainId } = getChainConfig(chain);
 	if (!matchaChainId) {
-		console.log(`No Matcha chain ID found for chain ${chain}, skipping Matcha quote`);
+		console.log(
+			`No Matcha chain ID found for chain ${chain}, skipping Matcha quote`,
+		);
 		return fallbackQuote("Matcha");
 	}
 
@@ -682,7 +695,9 @@ const inch = async (
 ): Promise<RawQuote> => {
 	const { inchChainId } = getChainConfig(chain);
 	if (!inchChainId) {
-		console.log(`No 1Inch chain ID found for chain ${chain}, skipping 1Inch quote`);
+		console.log(
+			`No 1Inch chain ID found for chain ${chain}, skipping 1Inch quote`,
+		);
 		return fallbackQuote("1Inch");
 	}
 
@@ -967,7 +982,11 @@ const calculateScores = (
 				simulation.swapTxGasUsed,
 			);
 
-			if (!outputValue.isFinite() || !gasValue.isFinite() || outputValue.isZero()) {
+			if (
+				!outputValue.isFinite() ||
+				!gasValue.isFinite() ||
+				outputValue.isZero()
+			) {
 				return {
 					...item,
 					score: Number.POSITIVE_INFINITY,
@@ -1038,10 +1057,8 @@ export const getQuoteComparison = createServerFn({
 			const result = await Promise.race<QuoteComparisonResult>([
 				(async () => {
 					const tokenList = await getTokenListInternal(chain);
-					const tokenIn =
-						findTokenBySymbol(tokenList, tokenInSymbol)
-					const tokenOut =
-						findTokenBySymbol(tokenList, tokenOutSymbol) 
+					const tokenIn = findTokenBySymbol(tokenList, tokenInSymbol);
+					const tokenOut = findTokenBySymbol(tokenList, tokenOutSymbol);
 
 					if (!tokenIn || !tokenOut) {
 						throw new Error("Unsupported token symbol");
@@ -1054,51 +1071,74 @@ export const getQuoteComparison = createServerFn({
 						chain,
 					);
 
+					// If the client specifies disabledAggregators, skip those tasks
+					const disabledSet = new Set<string>(data?.disabledAggregators ?? []);
+					const shouldFetch = (name: string) => !disabledSet.has(name);
+
+					const baseTasks: QuoteTask[] = [];
+					if (shouldFetch("KyberSwap")) {
+						baseTasks.push({
+							label: "KyberSwap",
+							promise: kyberswap(tokenIn, tokenOut, tokenAmount, chain),
+						});
+					}
+					if (shouldFetch("1Inch")) {
+						baseTasks.push({
+							label: "1Inch",
+							promise: inch(tokenIn, tokenOut, tokenAmount, chain),
+						});
+					}
+					if (shouldFetch("Matcha")) {
+						baseTasks.push({
+							label: "Matcha",
+							promise: matcha(tokenIn, tokenOut, tokenAmount, chain),
+						});
+					}
+					if (shouldFetch("0x")) {
+						baseTasks.push({
+							label: "0x",
+							promise: zeroEx(tokenIn, tokenOut, tokenAmount, chain),
+						});
+					}
+
+					const chunkTaskList = chunkSizes
+						.map((chunk) => ({
+							label: `Blazing chunks ${chunk}`,
+							chunk,
+						}))
+						.filter(({ label }) => shouldFetch(label))
+						.map(({ chunk, label }) => ({
+							label,
+							promise: callBlazingNew(
+								tokenIn,
+								tokenOut,
+								tokenAmount,
+								chain,
+								chunk,
+								disablePrice,
+							),
+						}));
+
+					const defaultTasks = shouldFetch("Blazing Default")
+						? [
+								{
+									label: "Blazing Default",
+									promise: callBlazingNew(
+										tokenIn,
+										tokenOut,
+										tokenAmount,
+										chain,
+										null,
+										disablePrice,
+									),
+								},
+							]
+						: [];
+
 					const [baseQuotes, chunkQuotes, defaultQuote] = await Promise.all([
-						settleQuotes([
-							{
-								label: "KyberSwap",
-								promise: kyberswap(tokenIn, tokenOut, tokenAmount, chain),
-							},
-							{
-								label: "1Inch",
-								promise: inch(tokenIn, tokenOut, tokenAmount, chain),
-							},
-							{
-								label: "Matcha",
-								promise: matcha(tokenIn, tokenOut, tokenAmount, chain),
-							},
-							{
-								label: "0x",
-								promise: zeroEx(tokenIn, tokenOut, tokenAmount, chain),
-							},
-						]),
-						settleQuotes(
-							chunkSizes.map((chunk) => ({
-								label: `Blazing chunks ${chunk}`,
-								promise: callBlazingNew(
-									tokenIn,
-									tokenOut,
-									tokenAmount,
-									chain,
-									chunk,
-									disablePrice,
-								),
-							})),
-						),
-						settleQuotes([
-							{
-								label: "Blazing Default",
-								promise: callBlazingNew(
-									tokenIn,
-									tokenOut,
-									tokenAmount,
-									chain,
-									null,
-									disablePrice,
-								),
-							},
-						]),
+						settleQuotes(baseTasks),
+						settleQuotes(chunkTaskList),
+						settleQuotes(defaultTasks),
 					]);
 					const simulated = await simulateAll(
 						[...baseQuotes, ...chunkQuotes, ...defaultQuote],
@@ -1127,10 +1167,10 @@ export const getQuoteComparison = createServerFn({
 					const aggregatorErrors = Object.fromEntries(
 						ordered
 							.map((quote) => {
-								const simulationError =
-									!quote.simulationResult?.isSuccessful
-										? quote.simulationResult?.error ?? quote.simulationResult?.requestId
-										: null;
+								const simulationError = !quote.simulationResult?.isSuccessful
+									? (quote.simulationResult?.error ??
+										quote.simulationResult?.requestId)
+									: null;
 								const error = quote.error ?? simulationError ?? null;
 								return [quote.aggregator, error] as const;
 							})
@@ -1162,7 +1202,7 @@ export const getQuoteComparison = createServerFn({
 				),
 			]);
 
-			console.log(result)
+			console.log(result);
 
 			return result;
 		} catch (error) {
