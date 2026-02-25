@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	createColumnHelper,
 	flexRender,
@@ -25,10 +25,7 @@ import {
 	PopoverContent,
 	PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-	Dialog,
-	DialogContent,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Select,
@@ -412,6 +409,7 @@ function App() {
 	const [displayTokenAmount, setDisplayTokenAmount] = useState("");
 	const [isTokenAmountFocused, setIsTokenAmountFocused] = useState(false);
 	const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+	const [disabledAggregators, setDisabledAggregators] = useState<string[]>([]);
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
 		rawResponse: false,
@@ -458,6 +456,8 @@ function App() {
 		};
 	}, [search, searchTokenInDecimals]);
 
+	const queryClient = useQueryClient();
+
 	const query = useQuery({
 		queryKey: ["quote-comparison", normalizedSearch],
 		queryFn: ({ signal }) =>
@@ -466,10 +466,10 @@ function App() {
 	});
 
 	const deferredResults = useDeferredValue(query.data?.results ?? []);
-	console.log("Quote comparison query", query.data?.results);
 
 	const displayedResults = useMemo(() => {
 		if (showAllBlazingChunks) {
+			console.log("Showing all results, including Blazing chunks");
 			return deferredResults;
 		}
 
@@ -477,6 +477,7 @@ function App() {
 			(row) => row.aggregator === "Blazing Default",
 		);
 		if (!blazingDefault || !Number.isFinite(blazingDefault.score)) {
+			console.warn("Blazing Default result is missing or has invalid score, showing all results", blazingDefault);
 			return deferredResults;
 		}
 
@@ -488,7 +489,7 @@ function App() {
 				return true;
 			}
 
-			return row.score > defaultScore;
+			return row.score < defaultScore;
 		});
 	}, [deferredResults, showAllBlazingChunks]);
 
@@ -545,6 +546,32 @@ function App() {
 
 	const columns = useMemo(
 		() => [
+			columnHelper.display({
+				id: "disabledToggle",
+				header: "Disable",
+				cell: (info) => {
+					const agg = info.row.original.aggregator;
+					const disabled = disabledAggregators.includes(agg);
+					return (
+						<div className="flex items-center">
+							<Checkbox
+								checked={disabled}
+								onCheckedChange={(checked) => {
+									if (checked) {
+										setDisabledAggregators((prev) =>
+											prev.includes(agg) ? prev : [...prev, agg],
+										);
+									} else {
+										setDisabledAggregators((prev) =>
+											prev.filter((x) => x !== agg),
+										);
+									}
+								}}
+							/>
+						</div>
+					);
+				},
+			}),
 			columnHelper.accessor("aggregator", {
 				header: "Aggregator",
 				cell: (info) => (
@@ -557,6 +584,7 @@ function App() {
 				header: "Status",
 				cell: (info) => {
 					const failed = Boolean(info.row.original.failed);
+					const disabled = Boolean((info.row.original as any).disabled) || disabledAggregators.includes(info.row.original.aggregator);
 					const errorMsg =
 						info.row.original.error ??
 						info.row.original.simulationResult?.error ??
@@ -566,15 +594,15 @@ function App() {
 						<Popover>
 							<PopoverTrigger asChild>
 								<span>
-									<Badge variant={failed ? "destructive" : "outline"}>
-										{failed ? "Failed" : "Passed"}
+									<Badge variant={disabled ? "secondary" : failed ? "destructive" : "outline"}>
+										{disabled ? "Disabled" : failed ? "Failed" : "Passed"}
 									</Badge>
 								</span>
 							</PopoverTrigger>
-							{failed && (
+							{(failed || disabled) && (
 								<PopoverContent align="start" className="bg-white">
 									<div className="max-w-xs max-h-72 overflow-auto p-2 text-sm text-slate-700">
-										{errorMsg ?? "Unknown error"}
+										{disabled ? "Disabled by user" : errorMsg ?? "Unknown error"}
 									</div>
 								</PopoverContent>
 							)}
@@ -955,13 +983,49 @@ function App() {
 					),
 			}),
 		],
-		[tokenOutDecimals],
+		[tokenOutDecimals, disabledAggregators],
 	);
 
-	console.log("Displayed results", displayedResults);
+	const transformedResults = useMemo(() => {
+		if (!displayedResults) return [];
+		const base = displayedResults.map((row) =>
+			disabledAggregators.includes(row.aggregator)
+				? {
+					  ...row,
+					  amountOut: null,
+					  gasUsed: null,
+					  sources: null,
+					  rawResponse: null,
+					  calldataResponse: null,
+					  simulationResult: undefined,
+					  // mark as disabled for UI rendering (don't set failed)
+					  disabled: true,
+				  }
+				: row,
+		);
+
+		const present = new Set(base.map((r) => r.aggregator));
+		const placeholders = disabledAggregators
+			.filter((agg) => !present.has(agg))
+			.map((agg) => ({
+				aggregator: agg,
+				amountOut: null,
+				gasUsed: null,
+				sources: null,
+				rawResponse: null,
+				calldataResponse: null,
+				simulationResult: undefined,
+				disabled: true,
+				netOutput: 0,
+				distance: 0,
+				score: Number.POSITIVE_INFINITY,
+			} as any));
+
+		return [...base, ...placeholders];
+	}, [displayedResults, disabledAggregators]);
 
 	const table = useReactTable({
-		data: displayedResults,
+		data: transformedResults,
 		columns,
 		state: {
 			sorting,
@@ -973,7 +1037,7 @@ function App() {
 		getSortedRowModel: getSortedRowModel(),
 	});
 
-	const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+	const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		const nextSearch = {
 			...formState,
@@ -988,10 +1052,30 @@ function App() {
 			search.order === nextSearch.order &&
 			search.disablePrice === nextSearch.disablePrice;
 
+		// build normalized payload matching the query key shape
+		const tokenInDecimals = tokenBySymbol.get(nextSearch.tokenIn)?.decimals ?? 18;
+		const parsedAmount = parseTokenInput(nextSearch.tokenAmount, tokenInDecimals);
+		const normalizedNext = {
+			...nextSearch,
+			tokenAmount: parsedAmount ?? parseUnits("1", tokenInDecimals).toString(),
+		};
+
+		// If the search is identical, just fetch with disabledAggregators and skip navigation
 		if (isSameSearch) {
-			void query.refetch();
+			await queryClient.fetchQuery({
+				queryKey: ["quote-comparison", normalizedNext],
+				queryFn: () =>
+					getQuoteComparison({ data: { ...normalizedNext, disabledAggregators } } as any),
+			});
 			return;
 		}
+
+		// Otherwise fetch and navigate
+		await queryClient.fetchQuery({
+			queryKey: ["quote-comparison", normalizedNext],
+			queryFn: () =>
+				getQuoteComparison({ data: { ...normalizedNext, disabledAggregators } } as any),
+		});
 
 		navigate({ search: nextSearch });
 	};
@@ -1389,21 +1473,36 @@ function App() {
 										))}
 									</thead>
 									<tbody className="text-slate-700">
-										{table.getRowModel().rows.map((row) => (
-											<tr key={row.id} className="transition hover:bg-slate-50">
-												{row.getVisibleCells().map((cell) => (
-													<td
-														key={cell.id}
-														className="border-b border-slate-100 px-4 py-3 align-top"
-													>
-														{flexRender(
-															cell.column.columnDef.cell,
-															cell.getContext(),
-														)}
-													</td>
-												))}
-											</tr>
-										))}
+										{table.getRowModel().rows.map((row) => {
+											const isDisabledRow = disabledAggregators.includes(
+												(row.original as any).aggregator,
+											);
+
+											return (
+												<tr
+													key={row.id}
+													className={
+														isDisabledRow
+															? "bg-slate-100"
+															: "transition hover:bg-slate-50"
+													}
+												>
+													{row.getVisibleCells().map((cell) => {
+														return (
+															<td
+																key={cell.id}
+																className="border-b border-slate-100 px-4 py-3 align-top"
+															>
+																{flexRender(
+																	cell.column.columnDef.cell,
+																	cell.getContext(),
+																)}
+															</td>
+														);
+													})}
+												</tr>
+											);
+										})}
 									</tbody>
 								</table>
 							</div>
@@ -1412,25 +1511,29 @@ function App() {
 				</div>
 			</div>
 			<footer className="border-t border-slate-200 mt-8 bg-white py-4">
-						<div className="mx-auto max-w-8xl px-6 flex items-center justify-between text-sm text-slate-600">
-							<div>made by GooGrand and RND332 in behalf of BadConfig</div>
-							<div>
-								<button
-									type="button"
-									onClick={() => setLeaderboardOpen(true)}
-									className="text-slate-600 underline decoration-dotted underline-offset-2"
-								>
-									leaderboard
-								</button>
-							</div>
-						</div>
-					</footer>
+				<div className="mx-auto max-w-8xl px-6 flex items-center justify-between text-sm text-slate-600">
+					<div>made by GooGrand and RND332 in behalf of BadConfig</div>
+					<div>
+						<button
+							type="button"
+							onClick={() => setLeaderboardOpen(true)}
+							className="text-slate-600 underline decoration-dotted underline-offset-2"
+						>
+							leaderboard
+						</button>
+					</div>
+				</div>
+			</footer>
 
-					<Dialog open={leaderboardOpen} onOpenChange={setLeaderboardOpen}>
-						<DialogContent className="w-[90vw] h-[90vh] max-w-none p-0">
-							<img src="/leaderboard/egorov.png" alt="Misha Egorov" className="w-full h-full object-contain" />
-						</DialogContent>
-					</Dialog>
+			<Dialog open={leaderboardOpen} onOpenChange={setLeaderboardOpen}>
+				<DialogContent className="w-[90vw] h-[90vh] max-w-none p-0">
+					<img
+						src="/leaderboard/egorov.png"
+						alt="Misha Egorov"
+						className="w-full h-full object-contain"
+					/>
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }
