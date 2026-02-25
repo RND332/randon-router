@@ -25,6 +25,10 @@ import {
 	PopoverContent,
 	PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+	Dialog,
+	DialogContent,
+} from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Select,
@@ -407,6 +411,7 @@ function App() {
 	const [isTokenOutOpen, setIsTokenOutOpen] = useState(false);
 	const [displayTokenAmount, setDisplayTokenAmount] = useState("");
 	const [isTokenAmountFocused, setIsTokenAmountFocused] = useState(false);
+	const [leaderboardOpen, setLeaderboardOpen] = useState(false);
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
 		rawResponse: false,
@@ -1406,6 +1411,26 @@ function App() {
 					</div>
 				</div>
 			</div>
+			<footer className="border-t border-slate-200 mt-8 bg-white py-4">
+						<div className="mx-auto max-w-8xl px-6 flex items-center justify-between text-sm text-slate-600">
+							<div>made by GooGrand and RND332 in behalf of BadConfig</div>
+							<div>
+								<button
+									type="button"
+									onClick={() => setLeaderboardOpen(true)}
+									className="text-slate-600 underline decoration-dotted underline-offset-2"
+								>
+									leaderboard
+								</button>
+							</div>
+						</div>
+					</footer>
+
+					<Dialog open={leaderboardOpen} onOpenChange={setLeaderboardOpen}>
+						<DialogContent className="w-[90vw] h-[90vh] max-w-none p-0">
+							<img src="/leaderboard/egorov.png" alt="Misha Egorov" className="w-full h-full object-contain" />
+						</DialogContent>
+					</Dialog>
 		</div>
 	);
 }
