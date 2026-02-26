@@ -364,6 +364,8 @@ const ethereumTokenListUrl = new URL(
 const fetchTokenList = async (chain: SupportedChain) => {
 	const chainUrl = tokenListUrlForChain(chain);
 
+	console.log(`Fetching token list for chain ${chain} from URL: ${chainUrl}`);
+
 	if (chainUrl) {
 		try {
 			const content = await readFile(chainUrl, "utf-8");
